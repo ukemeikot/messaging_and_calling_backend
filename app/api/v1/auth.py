@@ -3,12 +3,14 @@ Authentication routes.
 
 Endpoints:
 - POST /register - Create new user account
-- POST /login - Authenticate user (coming next)
+- POST /login - Authenticate user
 - POST /refresh - Get new access token (coming next)
-- POST /resend-verification - Resend verification email (coming later)
+- GET /me - Get current user details
+- GET /google/login - Initiate Google OAuth
+- GET /google/callback - Handle Google OAuth return
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.schemas.user import (
@@ -18,13 +20,16 @@ from app.schemas.user import (
     TokenResponse,
     LoginResponse,
     UserLogin,
-    VerificationStatus
+    VerificationStatus,
+    OAuthCallbackResponse
 )
 from app.services.user_service import UserService
 from app.core.security import create_access_token, create_refresh_token
 import os
 from app.core.dependencies import get_current_user
 from app.models.user import User
+from authlib.integrations.starlette_client import OAuthError
+from app.services.oauth_service import oauth, OAuthService
 
 # Create router with prefix and tags
 router = APIRouter(
@@ -40,47 +45,12 @@ ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15")
     response_model=RegisterResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Register new user",
-    description="""
-    Register a new user account.
-    
-    **Process:**
-    1. Validate input data (Pydantic handles this)
-    2. Check if username/email already exists
-    3. Hash password securely (Argon2)
-    4. Create user in database
-    5. Generate authentication tokens
-    6. Return user data + tokens
-    
-    **Security:**
-    - Password is hashed (never stored in plain text)
-    - Tokens are JWT signed (can't be tampered with)
-    - User starts as unverified (hybrid approach)
-    
-    **Next Steps for User:**
-    - User receives verification email (we'll add this later)
-    - User can explore app with limited features
-    - User verifies email to unlock all features
-    """
+    description="Register a new user account with email and password."
 )
 async def register(
     user_data: UserRegister,
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Register a new user.
-    
-    Args:
-        user_data: Registration data (validated by Pydantic)
-        db: Database session (injected by FastAPI)
-        
-    Returns:
-        RegisterResponse with user info, tokens, and verification status
-        
-    Raises:
-        HTTPException 400: If username or email already exists
-        HTTPException 500: If database error occurs
-    """
-    
     # Create user service instance
     user_service = UserService(db)
     
@@ -121,7 +91,6 @@ async def register(
             full_name=user_data.full_name
         )
     except Exception as e:
-        # Log the error (we'll add proper logging later)
         print(f"Error creating user: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -133,22 +102,20 @@ async def register(
     
     # Generate authentication tokens
     token_data = {
-        "user_id": str(new_user.id),  # Convert UUID to string for JWT
+        "user_id": str(new_user.id),
         "username": new_user.username
     }
     
     access_token = create_access_token(token_data)
     refresh_token = create_refresh_token(token_data)
     
-    # Create token response
     tokens = TokenResponse(
         access_token=access_token,
         refresh_token=refresh_token,
         token_type="bearer",
-        expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60  # Convert minutes to seconds
+        expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60
     )
     
-    # Create verification status
     verification_status = VerificationStatus(
         is_verified=new_user.is_verified,
         message=f"A verification email has been sent to {new_user.email}",
@@ -160,10 +127,8 @@ async def register(
         ]
     )
     
-    # Convert SQLAlchemy model to Pydantic model
     user_response = UserResponse.model_validate(new_user)
     
-    # Return complete response
     return RegisterResponse(
         message="User registered successfully",
         user=user_response,
@@ -176,49 +141,12 @@ async def register(
     response_model=LoginResponse,
     status_code=status.HTTP_200_OK,
     summary="User login",
-    description="""
-    Authenticate user and return tokens.
-    
-    **Process:**
-    1. Accept username OR email (flexible login)
-    2. Find user in database
-    3. Verify password (constant-time comparison)
-    4. Check if account is active
-    5. Generate new tokens
-    6. Update last_login timestamp
-    7. Return user data + tokens
-    
-    **Security:**
-    - Password verified using Argon2
-    - Failed attempts don't reveal which part failed (username or password)
-    - Returns same error for missing user or wrong password (prevents enumeration)
-    - Inactive accounts cannot log in
-    
-    **Error Responses:**
-    - 401: Invalid credentials (wrong username/email or password)
-    - 403: Account disabled/inactive
-    """
+    description="Authenticate user and return tokens."
 )
 async def login(
     login_data: UserLogin,
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Authenticate user and return JWT tokens.
-    
-    Args:
-        login_data: Login credentials (username/email + password)
-        db: Database session
-        
-    Returns:
-        LoginResponse with user info and tokens
-        
-    Raises:
-        HTTPException 401: Invalid credentials
-        HTTPException 403: Account inactive
-    """
-    
-    # Create user service
     user_service = UserService(db)
     
     # Authenticate user
@@ -227,7 +155,6 @@ async def login(
         password=login_data.password
     )
     
-    # If authentication failed
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -237,7 +164,6 @@ async def login(
             }
         )
     
-    # Check if account is active
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -253,16 +179,14 @@ async def login(
     await db.commit()
     await db.refresh(user)
     
-    # Generate tokens
     token_data = {
-        "user_id": str(user.id),  # Convert UUID to string
+        "user_id": str(user.id),
         "username": user.username
     }
     
     access_token = create_access_token(token_data)
     refresh_token = create_refresh_token(token_data)
     
-    # Create token response
     tokens = TokenResponse(
         access_token=access_token,
         refresh_token=refresh_token,
@@ -270,10 +194,8 @@ async def login(
         expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60
     )
     
-    # Convert to Pydantic model
     user_response = UserResponse.model_validate(user)
     
-    # Return response
     return LoginResponse(
         message="Login successful",
         user=user_response,
@@ -285,44 +207,118 @@ async def login(
     response_model=UserResponse,
     status_code=status.HTTP_200_OK,
     summary="Get current user",
-    description="""
-    Get the currently authenticated user's information.
-    
-    **Authentication Required:** Yes (Bearer token)
-    
-    **How to use:**
-    1. Login to get access token
-    2. Add token to Authorization header: `Bearer <token>`
-    3. Call this endpoint
-    4. Receive your user information
-    
-    **Use cases:**
-    - Load user profile on app startup
-    - Verify token is still valid
-    - Refresh user data after updates
-    
-    **Error Responses:**
-    - 401: Invalid/expired token
-    - 403: Account disabled
-    """
+    description="Get the currently authenticated user's information."
 )
 async def get_me(
     current_user: User = Depends(get_current_user)
 ):
+    return UserResponse.model_validate(current_user)
+
+# ============================================
+# OAUTH AUTHENTICATION
+# ============================================
+
+@router.get(
+    "/google/login",
+    summary="Initiate Google OAuth login",
+    description="Redirect user to Google login page."
+)
+async def google_login(request: Request):
     """
-    Get current authenticated user.
+    Initiate Google OAuth flow.
+    """
+    # 1. Safely get the client using create_client
+    client = oauth.create_client('google')
+    if not client:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Google OAuth client not configured"
+        )
+        
+    redirect_uri = os.getenv('GOOGLE_REDIRECT_URI')
+    return await client.authorize_redirect(request, redirect_uri)
+
+@router.get(
+    "/google/callback",
+    response_model=OAuthCallbackResponse,
+    summary="Google OAuth callback",
+    description="Callback endpoint after Google authentication."
+)
+async def google_callback(
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Handle Google OAuth callback.
+    """
+    # 1. Safely get the client
+    client = oauth.create_client('google')
+    if not client:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Google OAuth client not configured"
+        )
+
+    try:
+        # 2. Use the client instance to get token
+        token = await client.authorize_access_token(request)
+    except OAuthError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "oauth_failed",
+                "message": f"Google authentication failed: {str(e)}"
+            }
+        )
     
-    Args:
-        current_user: Injected by get_current_user dependency
-        
-    Returns:
-        UserResponse with current user data
-        
-    Security:
-        - Requires valid JWT token in Authorization header
-        - Token must not be expired
-        - User must exist and be active
-    """
+    # Get user info from Google
+    user_info = token.get('userinfo')
+    if not user_info:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "no_user_info",
+                "message": "Could not get user information from Google"
+            }
+        )
+    
+    # Authenticate or create user
+    oauth_service = OAuthService(db)
+    
+    try:
+        user, is_new_user = await oauth_service.authenticate_with_google(user_info)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "error": "authentication_failed",
+                "message": f"Failed to authenticate user: {str(e)}"
+            }
+        )
+    
+    # Generate JWT tokens
+    token_data = {
+        "user_id": str(user.id),
+        "username": user.username
+    }
+    
+    access_token = create_access_token(token_data)
+    refresh_token = create_refresh_token(token_data)
+    
+    tokens = TokenResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        token_type="bearer",
+        expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    )
     
     # Convert to Pydantic model
-    return UserResponse.model_validate(current_user)
+    user_response = UserResponse.model_validate(user)
+    
+    # Return response
+    return OAuthCallbackResponse(
+        message="Authentication successful" if not is_new_user else "Account created successfully",
+        user=user_response,
+        tokens=tokens,
+        is_new_user=is_new_user
+    )

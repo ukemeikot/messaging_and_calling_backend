@@ -323,3 +323,52 @@ class VerificationStatus(BaseModel):
         }
     }
 
+# ============================================
+# OAUTH AUTHENTICATION
+# ============================================
+
+class GoogleLoginRequest(BaseModel):
+    """
+    Schema for initiating Google OAuth login.
+    
+    Note: This is optional. We can also redirect directly.
+    """
+    redirect_url: Optional[str] = Field(
+        None,
+        description="URL to redirect to after authentication"
+    )
+
+class OAuthCallbackResponse(BaseModel):
+    """
+    Response after successful OAuth authentication.
+    """
+    message: str
+    user: UserResponse
+    tokens: TokenResponse
+    is_new_user: bool  # True if account was just created
+    
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "message": "Authentication successful",
+                    "user": {
+                        "id": "550e8400-e29b-41d4-a716-446655440000",
+                        "username": "ukeme_ikot",
+                        "email": "ukeme@gmail.com",
+                        "full_name": "Ukeme Ikot",
+                        "is_active": True,
+                        "is_verified": True,
+                        "created_at": "2024-12-15T10:00:00Z"
+                    },
+                    "tokens": {
+                        "access_token": "eyJhbGci...",
+                        "refresh_token": "eyJhbGci...",
+                        "token_type": "bearer",
+                        "expires_in": 900
+                    },
+                    "is_new_user": True
+                }
+            ]
+        }
+    }
