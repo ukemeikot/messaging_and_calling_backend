@@ -12,7 +12,7 @@ from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Optional
 from datetime import datetime
 import re
-
+import uuid
 # ============================================
 # USER REGISTRATION
 # ============================================
@@ -122,15 +122,8 @@ class UserRegister(BaseModel):
 class UserResponse(BaseModel):
     """
     Schema for user data in API responses.
-    
-    Security: This excludes sensitive data like hashed_password!
-    
-    Why we don't send hashed_password:
-    - Even hashed passwords shouldn't be exposed
-    - No legitimate reason for client to have it
-    - Reduces attack surface
     """
-    id: int
+    id: uuid.UUID  # Changed from int to uuid.UUID
     username: str
     email: str
     full_name: Optional[str] = None
@@ -142,16 +135,16 @@ class UserResponse(BaseModel):
     updated_at: Optional[datetime] = None
     
     model_config = {
-        "from_attributes": True,  # Allows conversion from SQLAlchemy models
+        "from_attributes": True,
         "json_schema_extra": {
             "examples": [
                 {
-                    "id": 1,
+                    "id": "550e8400-e29b-41d4-a716-446655440000",  # UUID example
                     "username": "ukeme_ikot",
                     "email": "ukeme@example.com",
                     "full_name": "Ukeme Ikot",
-                    "bio": "Software Engineer specializing in mobile and backend development",
-                    "profile_picture_url": "https://example.com/avatars/ukeme.jpg",
+                    "bio": "Software Engineer",
+                    "profile_picture_url": "https://example.com/avatar.jpg",
                     "is_active": True,
                     "is_verified": False,
                     "created_at": "2024-12-14T10:00:00Z",

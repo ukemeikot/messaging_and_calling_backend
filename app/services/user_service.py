@@ -13,7 +13,7 @@ from sqlalchemy import select
 from app.models.user import User
 from app.core.security import hash_password
 from typing import Optional
-
+import uuid
 class UserService:
     """
     Service class for user operations.
@@ -61,12 +61,12 @@ class UserService:
         )
         return result.scalar_one_or_none()
     
-    async def get_user_by_id(self, user_id: int) -> Optional[User]:
+    async def get_user_by_id(self, user_id: uuid.UUID) -> Optional[User]:
         """
-        Find user by ID.
+        Find user by UUID.
         
         Args:
-            user_id: User's ID
+            user_id: User's UUID
             
         Returns:
             User object if found, None otherwise

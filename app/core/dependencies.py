@@ -13,6 +13,7 @@ from app.core.security import decode_token
 from app.services.user_service import UserService
 from app.models.user import User
 from jose import JWTError
+import uuid
 
 # Security scheme (extracts Bearer token from Authorization header)
 security = HTTPBearer()
@@ -69,14 +70,27 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"}
         )
     
-    # Get user_id from token payload
-    user_id = payload.get("user_id")
-    if user_id is None or not isinstance(user_id, int):
+    # Get and validate user_id from token (it's stored as string)
+    user_id_str = payload.get("user_id")
+    if user_id_str is None or not isinstance(user_id_str, str):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={
                 "error": "invalid_token",
                 "message": "Token missing or invalid user information"
+            },
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+
+    # Convert string to UUID
+    try:
+        user_id = uuid.UUID(user_id_str)
+    except (ValueError, AttributeError):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "error": "invalid_token",
+                "message": "Invalid user ID format"
             },
             headers={"WWW-Authenticate": "Bearer"}
         )

@@ -1,20 +1,30 @@
 from sqlalchemy import String, Boolean, DateTime, Text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
+from sqlalchemy.dialects.postgresql import UUID
 from app.database import Base
 from typing import Optional
 from datetime import datetime
+import uuid
 
 class User(Base):
     """
     User model for authentication and profile management.
     
-    Using SQLAlchemy 2.0 style with Mapped annotations for proper type checking.
+    Using UUID as primary key for:
+    - Security (unpredictable IDs)
+    - Privacy (doesn't reveal user count)
+    - Distributed systems (globally unique)
     """
     __tablename__ = "users"
 
-    # Primary key
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    # Primary key - UUID instead of integer
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        index=True
+    )
     
     # Authentication fields
     username: Mapped[str] = mapped_column(String(50), unique=True, index=True, nullable=False)

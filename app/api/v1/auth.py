@@ -133,7 +133,7 @@ async def register(
     
     # Generate authentication tokens
     token_data = {
-        "user_id": new_user.id,
+        "user_id": str(new_user.id),  # Convert UUID to string for JWT
         "username": new_user.username
     }
     
@@ -255,7 +255,7 @@ async def login(
     
     # Generate tokens
     token_data = {
-        "user_id": user.id,
+        "user_id": str(user.id),  # Convert UUID to string
         "username": user.username
     }
     
