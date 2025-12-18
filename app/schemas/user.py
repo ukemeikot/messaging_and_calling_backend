@@ -2,10 +2,10 @@
 Pydantic schemas for user data validation and serialization.
 
 Schemas define:
-- What data is required vs optional
-- Data types (string, int, email, etc.)
-- Validation rules (min length, format, etc.)
-- What data to return to client (security!)
+- Required vs optional data
+- Data types and formats
+- Validation rules
+- Secure response structures
 """
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
@@ -13,6 +13,7 @@ from typing import Optional
 from datetime import datetime
 import re
 import uuid
+
 # ============================================
 # USER REGISTRATION
 # ============================================
@@ -20,88 +21,52 @@ import uuid
 class UserRegister(BaseModel):
     """
     Schema for user registration request.
-    
-    This validates data when a new user signs up.
     """
+
     username: str = Field(
-        ...,  # Required field
+        ...,
         min_length=3,
         max_length=50,
-        description="Username (3-50 characters, alphanumeric + underscore)"
+        description="Username (3–50 characters, alphanumeric + underscore)",
     )
     email: EmailStr = Field(
-        ...,  # Required field
-        description="Valid email address"
+        ...,
+        description="Valid email address",
     )
     password: str = Field(
-        ...,  # Required field
+        ...,
         min_length=8,
         max_length=100,
-        description="Password (minimum 8 characters)"
+        description="Password (minimum 8 characters)",
     )
     full_name: Optional[str] = Field(
-        None,  # Optional field
+        None,
         max_length=100,
-        description="User's full name"
+        description="User's full name",
     )
-    
-    @field_validator('username')
+
+    @field_validator("username")
     @classmethod
-    def validate_username(cls, u_name: str) -> str:
-        """
-        Validate username format.
-        
-        Rules:
-        - Only letters, numbers, and underscores
-        - No spaces or special characters
-        - Case insensitive
-        
-        Why this validation:
-        - Prevents SQL injection attempts
-        - Ensures usernames work in URLs (@ukeme_ikot)
-        - Consistent format across the system
-        """
-        if not re.match(r'^[a-zA-Z0-9_]+$', u_name):
+    def validate_username(cls, value: str) -> str:
+        if not re.match(r"^[a-zA-Z0-9_]+$", value):
             raise ValueError(
-                'Username must contain only letters, numbers, and underscores'
+                "Username must contain only letters, numbers, and underscores"
             )
-        return u_name.lower()  # Convert to lowercase for consistency
-    
-    @field_validator('password')
+        return value.lower()
+
+    @field_validator("password")
     @classmethod
-    def validate_password(cls, u_password: str) -> str:
-        """
-        Validate password strength.
-        
-        Rules:
-        - At least 8 characters
-        - At least one uppercase letter
-        - At least one lowercase letter
-        - At least one number
-        
-        Why these rules:
-        - 8 chars = minimum for reasonable security
-        - Mixed case + numbers = harder to crack
-        - Industry standard (OWASP recommendation)
-        
-        Real-world impact:
-        - Weak password (lowercase only): Cracked in seconds
-        - Strong password (mixed): Cracked in years/never
-        """
-        if len(u_password) < 8:
-            raise ValueError('Password must be at least 8 characters long')
-        
-        if not re.search(r'[A-Z]', u_password):
-            raise ValueError('Password must contain at least one uppercase letter')
-        
-        if not re.search(r'[a-z]', u_password):
-            raise ValueError('Password must contain at least one lowercase letter')
-        
-        if not re.search(r'\d', u_password):
-            raise ValueError('Password must contain at least one number')
-        
-        return u_password
-    
+    def validate_password(cls, value: str) -> str:
+        if len(value) < 8:
+            raise ValueError("Password must be at least 8 characters long")
+        if not re.search(r"[A-Z]", value):
+            raise ValueError("Password must contain at least one uppercase letter")
+        if not re.search(r"[a-z]", value):
+            raise ValueError("Password must contain at least one lowercase letter")
+        if not re.search(r"\d", value):
+            raise ValueError("Password must contain at least one number")
+        return value
+
     model_config = {
         "json_schema_extra": {
             "examples": [
@@ -109,21 +74,22 @@ class UserRegister(BaseModel):
                     "username": "ukeme_ikot",
                     "email": "ukeme@example.com",
                     "password": "SecurePass123!",
-                    "full_name": "Ukeme Ikot"
+                    "full_name": "Ukeme Ikot",
                 }
             ]
         }
     }
 
 # ============================================
-# USER RESPONSE (What we send back to client)
+# USER RESPONSE
 # ============================================
 
 class UserResponse(BaseModel):
     """
-    Schema for user data in API responses.
+    Schema for user data returned to clients.
     """
-    id: uuid.UUID  # Changed from int to uuid.UUID
+
+    id: uuid.UUID
     username: str
     email: str
     full_name: Optional[str] = None
@@ -133,13 +99,13 @@ class UserResponse(BaseModel):
     is_verified: bool
     created_at: datetime
     updated_at: Optional[datetime] = None
-    
+
     model_config = {
         "from_attributes": True,
         "json_schema_extra": {
             "examples": [
                 {
-                    "id": "550e8400-e29b-41d4-a716-446655440000",  # UUID example
+                    "id": "550e8400-e29b-41d4-a716-446655440000",
                     "username": "ukeme_ikot",
                     "email": "ukeme@example.com",
                     "full_name": "Ukeme Ikot",
@@ -148,205 +114,110 @@ class UserResponse(BaseModel):
                     "is_active": True,
                     "is_verified": False,
                     "created_at": "2024-12-14T10:00:00Z",
-                    "updated_at": "2024-12-14T10:00:00Z"
+                    "updated_at": "2024-12-14T10:00:00Z",
                 }
             ]
-        }
+        },
     }
 
 # ============================================
-# AUTHENTICATION RESPONSES
+# AUTH TOKENS
 # ============================================
 
 class TokenResponse(BaseModel):
     """
-    Schema for authentication token response.
-    
-    What each field means:
-    - access_token: Short-lived token for API requests (15 min)
-    - refresh_token: Long-lived token to get new access tokens (7 days)
-    - token_type: Always "bearer" (OAuth 2.0 standard)
-    - expires_in: Seconds until access token expires
+    Authentication token response.
     """
+
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
-    expires_in: int  # Seconds until access token expires
-    
-    model_config = {
-        "json_schema_extra": {
-            "examples": [
-                {
-                    "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxLCJ1c2VybmFtZSI6InVrZW1lX2lrb3QiLCJleHAiOjE3MzQxODM2MDB9.abc123def456",
-                    "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxLCJ0eXBlIjoicmVmcmVzaCIsImV4cCI6MTczNDc4ODQwMH0.xyz789uvw012",
-                    "token_type": "bearer",
-                    "expires_in": 900
-                }
-            ]
-        }
-    }
-
-class RegisterResponse(BaseModel):
-    """
-    Schema for registration success response.
-    """
-    message: str
-    user: UserResponse
-    tokens: TokenResponse
-    verification_status: VerificationStatus  # NEW!
-    
-    model_config = {
-        "json_schema_extra": {
-            "examples": [
-                {
-                    "message": "User registered successfully",
-                    "user": {
-                        "id": 1,
-                        "username": "ukeme_ikot",
-                        "email": "ukeme@example.com",
-                        "full_name": "Ukeme Ikot",
-                        "is_active": True,
-                        "is_verified": False,  # Not verified yet!
-                        "created_at": "2024-12-14T10:00:00Z"
-                    },
-                    "tokens": {
-                        "access_token": "eyJhbGci...",
-                        "refresh_token": "eyJhbGci...",
-                        "token_type": "bearer",
-                        "expires_in": 900
-                    },
-                    "verification_status": {
-                        "is_verified": False,
-                        "message": "A verification email has been sent to ukeme@example.com",
-                        "verification_required_for": [
-                            "Send messages",
-                            "Make calls",
-                            "Upload media"
-                        ]
-                    }
-                }
-            ]
-        }
-    }
+    expires_in: int
 
 # ============================================
-# LOGIN REQUEST
+# VERIFICATION STATUS
 # ============================================
-
-class UserLogin(BaseModel):
-    """
-    Schema for user login request.
-    
-    Accepts either username or email + password.
-    """
-    username_or_email: str = Field(
-        ...,
-        min_length=3,
-        description="Username or email address"
-    )
-    password: str = Field(
-        ...,
-        min_length=8,
-        description="User password"
-    )
-    
-    model_config = {
-        "json_schema_extra": {
-            "examples": [
-                {
-                    "username_or_email": "ukeme_ikot",
-                    "password": "SecurePass123!"
-                },
-                {
-                    "username_or_email": "ukeme@example.com",
-                    "password": "SecurePass123!"
-                }
-            ]
-        }
-    }
-
-class LoginResponse(BaseModel):
-    """
-    Schema for successful login response.
-    """
-    message: str
-    user: UserResponse
-    tokens: TokenResponse
-    
-    model_config = {
-        "json_schema_extra": {
-            "examples": [
-                {
-                    "message": "Login successful",
-                    "user": {
-                        "id": 1,
-                        "username": "ukeme_ikot",
-                        "email": "ukeme@example.com",
-                        "full_name": "Ukeme Ikot",
-                        "is_active": True,
-                        "is_verified": False,
-                        "created_at": "2024-12-14T10:00:00Z"
-                    },
-                    "tokens": {
-                        "access_token": "eyJhbGci...",
-                        "refresh_token": "eyJhbGci...",
-                        "token_type": "bearer",
-                        "expires_in": 900
-                    }
-                }
-            ]
-        }
-    }
 
 class VerificationStatus(BaseModel):
     """
-    Indicates what the user needs to do.
+    Indicates verification requirements.
     """
+
     is_verified: bool
     message: str
-    verification_required_for: list[str]  # Features that need verification
-    
+    verification_required_for: list[str]
+
+# ============================================
+# AUTH RESPONSES
+# ============================================
+
+class RegisterResponse(BaseModel):
+    """
+    Registration success response.
+    """
+
+    message: str
+    user: UserResponse
+    tokens: TokenResponse
+    verification_status: VerificationStatus
+
+
+class UserLogin(BaseModel):
+    """
+    Login request schema.
+    """
+
+    username_or_email: str = Field(..., min_length=3)
+    password: str = Field(..., min_length=8)
+
+
+class LoginResponse(BaseModel):
+    """
+    Login success response.
+    """
+
+    message: str
+    user: UserResponse
+    tokens: TokenResponse
+
+# ============================================
+# GOOGLE OAUTH (MOBILE NATIVE)
+# ============================================
+
+class GoogleTokenExchange(BaseModel):
+    """
+    Mobile Google Sign-In ID token exchange.
+    """
+
+    id_token: str = Field(
+        ...,
+        description="Google ID token from mobile Google Sign-In SDK",
+    )
+
     model_config = {
         "json_schema_extra": {
             "examples": [
                 {
-                    "is_verified": False,
-                    "message": "Please check your email to verify your account",
-                    "verification_required_for": [
-                        "Send messages",
-                        "Make voice/video calls",
-                        "Upload profile picture",
-                        "Add contacts"
-                    ]
+                    "id_token": "eyJhbGciOiJSUzI1NiIsImtpZCI6IjE5ZmUyYTdi..."
                 }
             ]
         }
     }
 
 # ============================================
-# OAUTH AUTHENTICATION
+# OAUTH RESPONSE
 # ============================================
-
-class GoogleLoginRequest(BaseModel):
-    """
-    Schema for initiating Google OAuth login.
-    
-    Note: This is optional. We can also redirect directly.
-    """
-    redirect_url: Optional[str] = Field(
-        None,
-        description="URL to redirect to after authentication"
-    )
 
 class OAuthCallbackResponse(BaseModel):
     """
-    Response after successful OAuth authentication.
+    Response after OAuth authentication.
     """
+
     message: str
     user: UserResponse
     tokens: TokenResponse
-    is_new_user: bool  # True if account was just created
-    
+    is_new_user: bool
+
     model_config = {
         "json_schema_extra": {
             "examples": [
@@ -357,18 +228,19 @@ class OAuthCallbackResponse(BaseModel):
                         "username": "ukeme_ikot",
                         "email": "ukeme@gmail.com",
                         "full_name": "Ukeme Ikot",
+                        "profile_picture_url": "https://lh3.googleusercontent.com/...",
                         "is_active": True,
                         "is_verified": True,
-                        "created_at": "2024-12-15T10:00:00Z"
+                        "created_at": "2024-12-15T10:00:00Z",
                     },
                     "tokens": {
                         "access_token": "eyJhbGci...",
                         "refresh_token": "eyJhbGci...",
                         "token_type": "bearer",
-                        "expires_in": 900
+                        "expires_in": 900,
                     },
-                    "is_new_user": True
+                    "is_new_user": True,
                 }
             ]
-        }
+        },
     }
