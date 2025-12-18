@@ -46,7 +46,7 @@ app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 # Include routers
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(profile.router, prefix="/api/v1")
-app.include_router(contacts.router, prefix="/api/v1")  # <--- Registered contacts router
+app.include_router(contacts.router, prefix="/api/v1")
 
 @app.get("/")
 async def root():
