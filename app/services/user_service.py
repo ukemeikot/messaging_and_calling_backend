@@ -1,18 +1,12 @@
 """
 User service - handles all user-related business logic.
-
-This layer sits between API routes and database.
-Why separate this?
-- Reusability: Same logic can be used by different routes
-- Testing: Easy to test without HTTP requests
-- Clean code: Routes stay thin, logic is here
 """
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, or_, and_
 from app.models.user import User
 from app.core.security import hash_password
-from typing import Optional
+from typing import Optional, List, Sequence  # <--- Added Sequence here
 import uuid
 
 class UserService:
@@ -90,12 +84,35 @@ class UserService:
     async def delete_user(self, user: User) -> None:
         """
         Permanently delete a user account.
-        
-        Args:
-            user: The user object to delete
         """
-        # In the future, you might want to delete related data here first
-        # (e.g., profile pictures, messages, etc.) if cascading isn't set up in DB.
-        
         await self.db.delete(user)
         await self.db.commit()
+
+    async def search_users(
+        self, 
+        query: str, 
+        current_user_id: uuid.UUID, 
+        limit: int = 10
+    ) -> Sequence[User]:  # <--- Changed List to Sequence
+        """
+        Search users by username, email, or full name.
+        Excludes the current user.
+        """
+        search_term = f"%{query.lower()}%"
+        
+        result = await self.db.execute(
+            select(User)
+            .where(
+                and_(
+                    User.id != current_user_id,  # Don't show myself
+                    User.is_active == True,      # Only active users
+                    or_(
+                        User.username.ilike(search_term),
+                        User.email.ilike(search_term),
+                        User.full_name.ilike(search_term)
+                    )
+                )
+            )
+            .limit(limit)
+        )
+        return result.scalars().all()

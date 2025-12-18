@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
-from app.api.v1 import auth, profile
+from app.api.v1 import auth, profile, contacts  # <--- Added contacts here
 import os
 from dotenv import load_dotenv
 from pathlib import Path
@@ -46,6 +46,7 @@ app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 # Include routers
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(profile.router, prefix="/api/v1")
+app.include_router(contacts.router, prefix="/api/v1")  # <--- Registered contacts router
 
 @app.get("/")
 async def root():
@@ -66,7 +67,17 @@ async def root():
                 "update": "PUT /api/v1/profile",
                 "change_password": "POST /api/v1/profile/password",
                 "upload_picture": "POST /api/v1/profile/picture",
-                "view_user": "GET /api/v1/profile/{user_id}"
+                "view_user": "GET /api/v1/profile/{user_id}",
+                "delete": "DELETE /api/v1/profile"
+            },
+            "contacts": {
+                "search": "GET /api/v1/contacts/search",
+                "request": "POST /api/v1/contacts/request",
+                "list": "GET /api/v1/contacts",
+                "pending": "GET /api/v1/contacts/pending",
+                "accept": "POST /api/v1/contacts/accept/{contact_id}",
+                "reject": "POST /api/v1/contacts/reject/{contact_id}",
+                "block": "POST /api/v1/contacts/block/{user_id}"
             }
         }
     }

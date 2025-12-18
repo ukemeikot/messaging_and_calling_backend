@@ -6,7 +6,7 @@ from app.database import Base
 from typing import Optional
 from datetime import datetime
 import uuid
-
+from sqlalchemy.orm import relationship
 class User(Base):
     """
     User model for authentication and profile management.
