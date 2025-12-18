@@ -6,22 +6,26 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-# Get database URL from environment with type checking
-DATABASE_URL = os.getenv("DATABASE_URL_ASYNC")
+# 1. Get database URL (Check 'DATABASE_URL' for Render, 'DATABASE_URL_ASYNC' for local)
+DATABASE_URL = os.getenv("DATABASE_URL") or os.getenv("DATABASE_URL_ASYNC")
 
 # Validate DATABASE_URL exists
 if not DATABASE_URL:
     raise ValueError(
-        "DATABASE_URL_ASYNC not found in environment variables. "
-        "Please check your .env file."
+        "DATABASE_URL not found in environment variables. "
+        "Please check your Render settings or .env file."
     )
+
+# 2. Fix the protocol for AsyncPG (Render gives 'postgresql://', we need 'postgresql+asyncpg://')
+if DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
 
 # Create async engine
 engine = create_async_engine(
     DATABASE_URL,
-    echo=True,  # Shows SQL queries in console (set False in production)
+    echo=False,  # Set to False for production to reduce log noise
     future=True,
-    pool_pre_ping=True,  # Checks connection before using
+    pool_pre_ping=True,
     pool_size=5,
     max_overflow=10,
 )
