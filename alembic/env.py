@@ -12,7 +12,7 @@ load_dotenv()
 
 # Import your Base and models
 from app.database import Base
-from app.models import User  # Import all models here
+from app.models import User, Contact, Conversation, Message  # Import all models here
 
 # Alembic Config object
 config = context.config
