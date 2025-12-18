@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
-from app.api.v1 import auth, profile, contacts  # <--- Added contacts here
+from app.api.v1 import auth, profile, contacts, chat  # <--- Added chat here
 import os
 from dotenv import load_dotenv
 from pathlib import Path
@@ -47,6 +47,7 @@ app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(profile.router, prefix="/api/v1")
 app.include_router(contacts.router, prefix="/api/v1")
+app.include_router(chat.router, prefix="/api/v1")  # <--- Registered chat router
 
 @app.get("/")
 async def root():
@@ -78,6 +79,11 @@ async def root():
                 "accept": "POST /api/v1/contacts/accept/{contact_id}",
                 "reject": "POST /api/v1/contacts/reject/{contact_id}",
                 "block": "POST /api/v1/contacts/block/{user_id}"
+            },
+            "chat": {
+                "websocket": "WS /api/v1/chat/ws?token={access_token}",
+                "create_group": "POST /api/v1/chat/conversations/group",
+                "list_conversations": "GET /api/v1/chat/conversations"
             }
         }
     }
