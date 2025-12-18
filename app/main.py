@@ -73,9 +73,13 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    """Health check"""
+    """
+    Health check endpoint
+    """
     return {
         "status": "healthy",
         "service": "enterprise-messaging-api",
-        "version": "0.1.0"
+        "version": "0.1.0",
+        "environment": os.getenv("ENVIRONMENT", "development"),
+        "debug": os.getenv("DEBUG", "True")
     }
