@@ -119,3 +119,9 @@ class ProfilePictureResponse(BaseModel):
             ]
         }
     }
+
+class DeleteAccountRequest(BaseModel):
+    """
+    Schema for account deletion confirmation.
+    """
+    password: str = Field(..., description="Current password for verification")

@@ -8,9 +8,15 @@ from app.database import get_db
 from app.core.dependencies import get_current_user
 from app.models.user import User
 from app.schemas.user import UserResponse
-from app.schemas.profile import ProfileUpdate, PasswordChange, ProfilePictureResponse
+from app.schemas.profile import (
+    ProfileUpdate, 
+    PasswordChange, 
+    ProfilePictureResponse,
+    DeleteAccountRequest  # Added this import
+)
 from app.services.profile_service import ProfileService
 from app.services.user_service import UserService
+from app.core.security import verify_password  # Added this import
 import uuid
 import os
 from pathlib import Path
@@ -29,47 +35,21 @@ router = APIRouter(
 async def get_profile(
     current_user: User = Depends(get_current_user)
 ):
-    """
-    Get current user's profile.
-    
-    Returns full profile including bio, profile picture, etc.
-    """
     return UserResponse.model_validate(current_user)
 
 @router.put(
     "",
     response_model=UserResponse,
     summary="Update profile",
-    description="""
-    Update user profile information.
-    
-    **Fields you can update:**
-    - full_name: Your full name
-    - bio: Short biography (max 500 characters)
-    
-    **Note:** Only send fields you want to update.
-    """
+    description="Update user profile information."
 )
 async def update_profile(
     profile_data: ProfileUpdate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Update user profile.
-    
-    Args:
-        profile_data: Profile fields to update
-        current_user: Authenticated user
-        db: Database session
-        
-    Returns:
-        Updated user profile
-    """
-    
     profile_service = ProfileService(db)
     
-    # Update profile
     updated_user = await profile_service.update_profile(
         user=current_user,
         full_name=profile_data.full_name,
@@ -82,38 +62,13 @@ async def update_profile(
     "/password",
     status_code=status.HTTP_200_OK,
     summary="Change password",
-    description="""
-    Change user password.
-    
-    **Requirements:**
-    - Must provide current password for verification
-    - New password must meet strength requirements
-    
-    **Security:**
-    - Current password verified before change
-    - New password hashed securely
-    """
+    description="Change user password."
 )
 async def change_password(
     password_data: PasswordChange,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Change user password.
-    
-    Args:
-        password_data: Current and new passwords
-        current_user: Authenticated user
-        db: Database session
-        
-    Returns:
-        Success message
-        
-    Raises:
-        HTTPException 400: If current password is incorrect
-    """
-    
     profile_service = ProfileService(db)
     
     try:
@@ -140,40 +95,13 @@ async def change_password(
     "/picture",
     response_model=ProfilePictureResponse,
     summary="Upload profile picture",
-    description="""
-    Upload a profile picture.
-    
-    **Supported formats:** JPEG, PNG, GIF
-    **Max size:** 5MB
-    **Recommended:** Square image, at least 400x400px
-    
-    **Process:**
-    1. Upload image
-    2. Validate format and size
-    3. Save to storage
-    4. Update user profile
-    """
+    description="Upload a profile picture."
 )
 async def upload_profile_picture(
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Upload profile picture.
-    
-    Args:
-        file: Image file (JPEG, PNG, GIF)
-        current_user: Authenticated user
-        db: Database session
-        
-    Returns:
-        Profile picture URL
-        
-    Raises:
-        HTTPException 400: Invalid file format or size
-    """
-    
     # Validate file type
     allowed_types = ["image/jpeg", "image/png", "image/gif"]
     if file.content_type not in allowed_types:
@@ -187,7 +115,7 @@ async def upload_profile_picture(
         )
     
     # Validate file size (5MB max)
-    max_size = 5 * 1024 * 1024  # 5MB in bytes
+    max_size = 5 * 1024 * 1024
     file_content = await file.read()
     if len(file_content) > max_size:
         raise HTTPException(
@@ -199,7 +127,7 @@ async def upload_profile_picture(
             }
         )
     
-    # Create uploads directory if it doesn't exist
+    # Create uploads directory
     upload_dir = Path("uploads/profile_pictures")
     upload_dir.mkdir(parents=True, exist_ok=True)
     
@@ -212,8 +140,6 @@ async def upload_profile_picture(
     with open(file_path, "wb") as f:
         f.write(file_content)
     
-    # Update user profile with file URL
-    # Note: In production, you'd upload to S3/CloudStorage and get a public URL
     profile_picture_url = f"/uploads/profile_pictures/{unique_filename}"
     
     profile_service = ProfileService(db)
@@ -231,33 +157,12 @@ async def upload_profile_picture(
     "/{user_id}",
     response_model=UserResponse,
     summary="Get user profile by ID",
-    description="""
-    Get any user's public profile information.
-    
-    **Privacy:**
-    - Returns only public information
-    - Email hidden unless you're friends (future feature)
-    - Some fields may be hidden based on privacy settings
-    """
+    description="Get any user's public profile information."
 )
 async def get_user_profile(
     user_id: uuid.UUID,
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Get user profile by ID.
-    
-    Args:
-        user_id: UUID of user to view
-        db: Database session
-        
-    Returns:
-        User profile
-        
-    Raises:
-        HTTPException 404: User not found
-    """
-    
     user_service = UserService(db)
     user = await user_service.get_user_by_id(user_id)
     
@@ -271,3 +176,43 @@ async def get_user_profile(
         )
     
     return UserResponse.model_validate(user)
+
+@router.delete(
+    "",
+    status_code=status.HTTP_200_OK,
+    summary="Delete account",
+    description="""
+    Permanently delete your account.
+    
+    **Security:**
+    - Requires password confirmation
+    - This action cannot be undone
+    """
+)
+async def delete_account(
+    confirmation: DeleteAccountRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Delete authenticated user account.
+    """
+    
+    # 1. Verify password matches
+    if not verify_password(confirmation.password, str(current_user.hashed_password)):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": "invalid_password",
+                "message": "The password provided is incorrect."
+            }
+        )
+    
+    # 2. Delete user
+    user_service = UserService(db)
+    await user_service.delete_user(current_user)
+    
+    return {
+        "message": "Account deleted successfully",
+        "email": current_user.email
+    }
