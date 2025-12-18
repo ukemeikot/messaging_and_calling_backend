@@ -20,7 +20,10 @@ app = FastAPI(
 # Session middleware (required for OAuth)
 app.add_middleware(
     SessionMiddleware,
-    secret_key=os.getenv("SECRET_KEY", "your-secret-key-here")
+    secret_key=os.getenv("SECRET_KEY", "your-secret-key-here"),
+    max_age=3600,       # Session expires in 1 hour
+    https_only=False,   # <--- ESSENTIAL for local development (allows HTTP)
+    same_site="lax"     # <--- Allows cookies during redirects
 )
 
 # CORS middleware
