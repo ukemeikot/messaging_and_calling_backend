@@ -86,6 +86,27 @@ class SenderInfo(BaseModel):
         }
     }
 
+class ChatParticipant(BaseModel):
+    """Schema for a user inside a conversation."""
+    user: SenderInfo  # Reusing SenderInfo to keep it consistent
+    is_admin: bool = False
+    
+    model_config = {
+        "from_attributes": True,
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "is_admin": True,
+                    "user": {
+                        "id": "660e8400-e29b-41d4-a716-446655440000",
+                        "username": "jdoe",
+                        "profile_picture_url": "https://api.example.com/uploads/avatar.jpg"
+                    }
+                }
+            ]
+        }
+    }
+
 class MessageResponse(BaseModel):
     """Schema for message response."""
     id: uuid.UUID
@@ -128,6 +149,7 @@ class ConversationResponse(BaseModel):
     group_image_url: Optional[str] = None
     last_message: Optional[MessageResponse] = None
     updated_at: datetime
+    participants: List[ChatParticipant]  # <--- Critical addition
     
     model_config = {
         "from_attributes": True,
@@ -138,6 +160,16 @@ class ConversationResponse(BaseModel):
                     "is_group": True,
                     "name": "Family Group",
                     "updated_at": "2024-01-01T12:05:00Z",
+                    "participants": [
+                        {
+                            "is_admin": True,
+                            "user": {"id": "uuid...", "username": "mom"}
+                        },
+                        {
+                            "is_admin": False,
+                            "user": {"id": "uuid...", "username": "dad"}
+                        }
+                    ],
                     "last_message": {
                         "id": "123e4567-e89b-12d3-a456-426614174000",
                         "content": "See you soon!",

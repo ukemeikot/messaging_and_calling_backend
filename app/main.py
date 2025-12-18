@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
-from app.api.v1 import auth, profile, contacts, chat  # <--- Added chat here
+from app.api.v1 import auth, profile, contacts, chat
 import os
 from dotenv import load_dotenv
 from pathlib import Path
@@ -47,7 +47,7 @@ app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(profile.router, prefix="/api/v1")
 app.include_router(contacts.router, prefix="/api/v1")
-app.include_router(chat.router, prefix="/api/v1")  # <--- Registered chat router
+app.include_router(chat.router, prefix="/api/v1")
 
 @app.get("/")
 async def root():
@@ -60,30 +60,20 @@ async def root():
             "auth": {
                 "register": "POST /api/v1/auth/register",
                 "login": "POST /api/v1/auth/login",
-                "google_login": "GET /api/v1/auth/google/login",
                 "me": "GET /api/v1/auth/me"
-            },
-            "profile": {
-                "get": "GET /api/v1/profile",
-                "update": "PUT /api/v1/profile",
-                "change_password": "POST /api/v1/profile/password",
-                "upload_picture": "POST /api/v1/profile/picture",
-                "view_user": "GET /api/v1/profile/{user_id}",
-                "delete": "DELETE /api/v1/profile"
             },
             "contacts": {
                 "search": "GET /api/v1/contacts/search",
-                "request": "POST /api/v1/contacts/request",
                 "list": "GET /api/v1/contacts",
-                "pending": "GET /api/v1/contacts/pending",
-                "accept": "POST /api/v1/contacts/accept/{contact_id}",
-                "reject": "POST /api/v1/contacts/reject/{contact_id}",
-                "block": "POST /api/v1/contacts/block/{user_id}"
+                "request": "POST /api/v1/contacts/request",
+                "pending": "GET /api/v1/contacts/pending"
             },
             "chat": {
                 "websocket": "WS /api/v1/chat/ws?token={access_token}",
+                "start_dm": "POST /api/v1/chat/conversations/direct",
                 "create_group": "POST /api/v1/chat/conversations/group",
-                "list_conversations": "GET /api/v1/chat/conversations"
+                "list_conversations": "GET /api/v1/chat/conversations",
+                "history": "GET /api/v1/chat/conversations/{id}/messages"
             }
         }
     }

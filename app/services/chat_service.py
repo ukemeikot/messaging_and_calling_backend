@@ -7,86 +7,53 @@ from sqlalchemy.orm import selectinload
 from typing import List, Sequence
 import uuid
 
-# Import the Enum explicitly to fix type errors
 from app.models.message import Conversation, ConversationParticipant, Message, MessageType
 from app.schemas.message import MessageCreate
 
 class ChatService:
-    """
-    Service for managing conversations and messages.
-    """
-    
     def __init__(self, db: AsyncSession):
         self.db = db
 
     async def create_direct_chat(self, user_id: uuid.UUID, recipient_id: uuid.UUID) -> Conversation:
-        """
-        Create or get existing 1-on-1 Direct Message (DM).
-        """
-        # Note: In a production app, you would first check if a DM 
-        # already exists between these two users to prevent duplicates.
-        
+        """Create or get existing DM."""
+        # 1. Check if DM already exists
+        # We query for a conversation where both users are participants and is_group=False
+        # (Simplified logic: creating new one for MVP reliability)
         new_chat = Conversation(is_group=False)
         self.db.add(new_chat)
-        await self.db.flush() # Flush to generate the new_chat.id
+        await self.db.flush()
         
-        # Add both users as participants
         p1 = ConversationParticipant(conversation_id=new_chat.id, user_id=user_id)
         p2 = ConversationParticipant(conversation_id=new_chat.id, user_id=recipient_id)
         
         self.db.add_all([p1, p2])
         await self.db.commit()
-        await self.db.refresh(new_chat)
         
-        return new_chat
+        # Return with participants loaded
+        return await self._get_conversation_by_id(new_chat.id)
 
-    async def create_group_chat(
-        self, 
-        creator_id: uuid.UUID, 
-        name: str, 
-        participant_ids: List[uuid.UUID]
-    ) -> Conversation:
-        """
-        Create a new group chat.
-        """
+    async def create_group_chat(self, creator_id: uuid.UUID, name: str, participant_ids: List[uuid.UUID]) -> Conversation:
+        """Create a group chat."""
         group = Conversation(is_group=True, name=name)
         self.db.add(group)
         await self.db.flush()
         
-        # Add creator as admin
-        admin = ConversationParticipant(
-            conversation_id=group.id, 
-            user_id=creator_id, 
-            is_admin=True
-        )
-        self.db.add(admin)
+        # Add admin
+        self.db.add(ConversationParticipant(conversation_id=group.id, user_id=creator_id, is_admin=True))
         
-        # Add other participants
+        # Add members
         for pid in participant_ids:
-            # Prevent adding the creator twice if they selected themselves
             if pid != creator_id:
-                member = ConversationParticipant(conversation_id=group.id, user_id=pid)
-                self.db.add(member)
+                self.db.add(ConversationParticipant(conversation_id=group.id, user_id=pid))
                 
         await self.db.commit()
-        await self.db.refresh(group)
-        return group
+        return await self._get_conversation_by_id(group.id)
 
     async def save_message(self, sender_id: uuid.UUID, message_data: MessageCreate) -> Message:
-        """
-        Save a message to the database.
-        
-        Fixes Type Errors:
-        - Converts message_data.message_type (str) -> MessageType (Enum)
-        - Handles optional media_url
-        """
-        
-        # 1. Convert Schema String to Database Enum
-        # This fixes the "str is not assignable to MessageType" error
+        """Save message."""
         try:
             msg_type_enum = MessageType(message_data.message_type)
         except ValueError:
-            # Fallback to text if invalid type is passed
             msg_type_enum = MessageType.TEXT
 
         msg = Message(
@@ -97,11 +64,9 @@ class ChatService:
             media_url=message_data.media_url, 
             reply_to_message_id=message_data.reply_to_message_id
         )
-        
         self.db.add(msg)
         
-        # 2. Update conversation's "updated_at" timestamp
-        # This moves the chat to the top of the user's list
+        # Update timestamp
         chat = await self.db.get(Conversation, message_data.conversation_id)
         if chat:
             chat.updated_at = func.now()
@@ -109,38 +74,63 @@ class ChatService:
         await self.db.commit()
         await self.db.refresh(msg)
         
-        # 3. Fetch the message again with the Sender loaded
-        # This ensures the API response includes the sender's username/avatar
+        # Load sender for response
         result = await self.db.execute(
-            select(Message)
-            .options(selectinload(Message.sender))
-            .where(Message.id == msg.id)
+            select(Message).options(selectinload(Message.sender)).where(Message.id == msg.id)
         )
         return result.scalar_one()
 
     async def get_user_conversations(self, user_id: uuid.UUID) -> Sequence[Conversation]:
         """
-        Get all conversations for a user, ordered by latest activity.
+        Get all conversations with Participants loaded.
         """
-        # Find all conversation IDs where the user is a participant
+        # 1. Get IDs of chats user is in
         subquery = select(ConversationParticipant.conversation_id).where(
             ConversationParticipant.user_id == user_id
         )
         
-        # Select the full conversation objects
-        query = select(Conversation).where(
-            Conversation.id.in_(subquery)
-        ).order_by(desc(Conversation.updated_at))
+        # 2. Fetch Chats + Participants + Users + Last Message
+        query = select(Conversation)\
+            .options(
+                selectinload(Conversation.participants).selectinload(ConversationParticipant.user),
+                selectinload(Conversation.messages)  # Optional: Optimizing last_message loading is better done with a dedicated subquery in prod
+            )\
+            .where(Conversation.id.in_(subquery))\
+            .order_by(desc(Conversation.updated_at))
         
+        result = await self.db.execute(query)
+        conversations = result.scalars().all()
+        
+        # Manual fix for 'last_message' if not using a complex hybrid_property
+        # This is a simple way to populate the field for the schema
+        for chat in conversations:
+            if chat.messages:
+                # Sort messages to find the last one (Python side sort)
+                chat.last_message = sorted(chat.messages, key=lambda m: m.created_at)[-1]
+        
+        return conversations
+
+    async def get_messages(self, conversation_id: uuid.UUID, limit: int = 50, skip: int = 0) -> Sequence[Message]:
+        query = select(Message)\
+            .options(selectinload(Message.sender))\
+            .where(Message.conversation_id == conversation_id)\
+            .order_by(desc(Message.created_at))\
+            .offset(skip)\
+            .limit(limit)
         result = await self.db.execute(query)
         return result.scalars().all()
 
     async def get_conversation_participants(self, conversation_id: uuid.UUID) -> List[uuid.UUID]:
-        """
-        Get list of user IDs in a conversation (for WebSocket broadcasting).
-        """
         query = select(ConversationParticipant.user_id).where(
             ConversationParticipant.conversation_id == conversation_id
         )
         result = await self.db.execute(query)
         return list(result.scalars().all())
+
+    # Helper to return a single conversation with all relations loaded
+    async def _get_conversation_by_id(self, conversation_id: uuid.UUID) -> Conversation:
+        query = select(Conversation)\
+            .options(selectinload(Conversation.participants).selectinload(ConversationParticipant.user))\
+            .where(Conversation.id == conversation_id)
+        result = await self.db.execute(query)
+        return result.scalar_one()
