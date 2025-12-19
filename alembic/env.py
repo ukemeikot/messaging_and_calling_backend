@@ -12,21 +12,19 @@ load_dotenv()
 
 # Import your Base and models
 from app.database import Base
-from app.models import User, Contact, Conversation, Message  # Import all models here
+# Ensure all models are imported so Alembic can see them for autogenerate
+from app.models import User, Contact, Conversation, Message 
 
 # Alembic Config object
 config = context.config
 
-# Get database URL with validation
+# --- RESTORED DYNAMIC URL LOGIC ---
+# This pulls the URL from your environment variables (Local or Render)
 DATABASE_URL = os.getenv("DATABASE_URL_ASYNC")
-if not DATABASE_URL:
-    raise ValueError(
-        "DATABASE_URL_ASYNC not found in environment variables. "
-        "Please check your .env file."
-    )
 
-# Set database URL from environment
-config.set_main_option("sqlalchemy.url", DATABASE_URL)
+if DATABASE_URL:
+    config.set_main_option("sqlalchemy.url", DATABASE_URL)
+# ----------------------------------
 
 # Interpret the config file for Python logging
 if config.config_file_name is not None:
@@ -56,29 +54,22 @@ def do_run_migrations(connection: Connection) -> None:
 
 async def run_async_migrations() -> None:
     """Run migrations in 'online' mode with async."""
-    configuration = config.get_section(config.config_ini_section)
-    
-    # Validate configuration exists
-    if configuration is None:
+    # We create the configuration for the engine
+    section = config.get_section(config.config_ini_section)
+    if section is None:
         raise ValueError("Could not get alembic configuration section")
+        
+    configuration = dict(section)
     
-    # Get and validate database URL
-    database_url = os.getenv("DATABASE_URL_ASYNC")
-    if not database_url:
-        raise ValueError("DATABASE_URL_ASYNC not found in environment variables")
-    
-    configuration["sqlalchemy.url"] = database_url
+    # Ensure the engine uses the environment-provided URL
+    if DATABASE_URL:
+        configuration["sqlalchemy.url"] = DATABASE_URL
     
     connectable = async_engine_from_config(
         configuration,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
-
-    async with connectable.connect() as connection:
-        await connection.run_sync(do_run_migrations)
-
-    await connectable.dispose()
 
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)

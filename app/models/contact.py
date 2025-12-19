@@ -1,8 +1,4 @@
-"""
-Contact model - manages relationships between users.
-"""
-
-from sqlalchemy import Column, Enum as SQLEnum, DateTime, ForeignKey, UniqueConstraint, CheckConstraint
+from sqlalchemy import Column, Enum as SQLEnum, DateTime, ForeignKey, UniqueConstraint, CheckConstraint, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 from sqlalchemy.dialects.postgresql import UUID
@@ -12,46 +8,21 @@ import uuid
 import enum
 
 class ContactStatus(str, enum.Enum):
-    """
-    Contact relationship status.
-    
-    PENDING: Request sent, awaiting response
-    ACCEPTED: Mutual contacts, can message/call
-    BLOCKED: User blocked the contact
-    """
     PENDING = "pending"
     ACCEPTED = "accepted"
     BLOCKED = "blocked"
 
 class Contact(Base):
-    """
-    Contact/Friend relationship model.
-    
-    Represents the relationship between two users.
-    
-    Examples:
-        User A sends request to User B:
-        - user_id = A, contact_user_id = B, status = pending
-        
-        User B accepts:
-        - Status changes to accepted
-        
-        User A blocks User B:
-        - user_id = A, contact_user_id = B, status = blocked
-    
-    Note: This is a unidirectional relationship from the database perspective,
-    but queries handle bidirectional logic (both users can see each other as contacts).
-    """
     __tablename__ = "contacts"
 
-    # Primary key
+    # Fix: Added server_default=func.gen_random_uuid() for portability
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         primary_key=True,
-        default=uuid.uuid4
+        default=uuid.uuid4,
+        server_default=func.gen_random_uuid()
     )
     
-    # User who initiated/owns this relationship
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE"),
@@ -59,7 +30,6 @@ class Contact(Base):
         index=True
     )
     
-    # The other user in the relationship
     contact_user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE"),
@@ -67,39 +37,36 @@ class Contact(Base):
         index=True
     )
     
-    # Relationship status
+    # Fix: Use the existing 'contact_status' enum name we created in the DB patch
     status: Mapped[ContactStatus] = mapped_column(
         SQLEnum(ContactStatus, name="contact_status"),
         nullable=False,
-        default=ContactStatus.PENDING
+        default=ContactStatus.PENDING,
+        server_default="PENDING"
     )
     
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        server_default=func.now()
+        server_default=func.now(),
+        nullable=False
     )
     
+    # Fix: Added server_default=func.now() to prevent Pydantic validation crashes
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
+        server_default=func.now(),
         onupdate=func.now(),
-        nullable=True
+        nullable=False
     )
     
-    # Relationships to User model
+    # Relationships
     user = relationship("User", foreign_keys=[user_id], backref="initiated_contacts")
     contact_user = relationship("User", foreign_keys=[contact_user_id], backref="received_contacts")
     
-    # Constraints
     __table_args__ = (
-        # Prevent duplicate relationships
         UniqueConstraint('user_id', 'contact_user_id', name='unique_contact_pair'),
-        
-        # Prevent self-friending
         CheckConstraint('user_id != contact_user_id', name='no_self_contact'),
-        
-        # Composite index for efficient queries
-        # Index for finding all contacts of a user (in either direction)
     )
     
     def __repr__(self):

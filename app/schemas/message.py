@@ -1,6 +1,3 @@
-"""
-Pydantic schemas for messaging.
-"""
 from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
@@ -88,7 +85,7 @@ class SenderInfo(BaseModel):
 
 class ChatParticipant(BaseModel):
     """Schema for a user inside a conversation."""
-    user: SenderInfo  # Reusing SenderInfo to keep it consistent
+    user: SenderInfo  
     is_admin: bool = False
     
     model_config = {
@@ -148,8 +145,9 @@ class ConversationResponse(BaseModel):
     name: Optional[str] = None
     group_image_url: Optional[str] = None
     last_message: Optional[MessageResponse] = None
-    updated_at: datetime
-    participants: List[ChatParticipant]  # <--- Critical addition
+    # CRITICAL FIX: Made Optional to allow creation before first update
+    updated_at: Optional[datetime] = None 
+    participants: List[ChatParticipant]
     
     model_config = {
         "from_attributes": True,
