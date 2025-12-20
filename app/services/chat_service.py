@@ -73,7 +73,8 @@ class MessageService:
         creator_id: uuid.UUID, 
         name: str, 
         participant_ids: List[uuid.UUID],
-        description: Optional[str] = None
+        description: Optional[str] = None,
+        admin_only_add_members: bool = False
     ) -> Conversation:
         """
         Create a new group chat with multiple participants.
@@ -83,6 +84,7 @@ class MessageService:
             name: Group chat name
             participant_ids: List of user UUIDs to add as members
             description: Optional group description
+            admin_only_add_members: If True, only admins can add members. If False, any member can add.
             
         Returns:
             The created Conversation object with all participants
@@ -90,7 +92,8 @@ class MessageService:
         group = Conversation(
             is_group=True, 
             name=name,
-            description=description
+            description=description,
+            admin_only_add_members=admin_only_add_members
         )
         self.db.add(group)
         await self.db.flush()
@@ -130,16 +133,20 @@ class MessageService:
         """
         Add new participants to an existing group chat.
         
+        Permission is based on the group's admin_only_add_members setting:
+        - If True: Only admins can add members
+        - If False: Any group member can add members
+        
         Args:
             conversation_id: UUID of the group chat
-            admin_user_id: UUID of the user performing the action (must be admin)
+            admin_user_id: UUID of the user performing the action
             participant_ids: List of user UUIDs to add
             
         Returns:
             Updated Conversation object with new participants
             
         Raises:
-            ValueError: If not a group, user not admin, or participants already exist
+            ValueError: If not a group, user not authorized, or participants already exist
         """
         # Verify conversation is a group
         conv = await self.db.get(Conversation, conversation_id)
@@ -148,16 +155,24 @@ class MessageService:
         if not conv.is_group:
             raise ValueError("Can only add participants to group chats")
         
-        # Verify user is admin
-        admin_check = await self.db.execute(
+        # Check if user is a participant
+        user_participant = await self.db.execute(
             select(ConversationParticipant).where(
                 ConversationParticipant.conversation_id == conversation_id,
-                ConversationParticipant.user_id == admin_user_id,
-                ConversationParticipant.is_admin == True
+                ConversationParticipant.user_id == admin_user_id
             )
         )
-        if not admin_check.scalar_one_or_none():
-            raise ValueError("Only group admins can add participants")
+        user_part = user_participant.scalar_one_or_none()
+        
+        if not user_part:
+            raise ValueError("You must be a member of this group to add participants")
+        
+        # Check permissions based on group settings
+        if conv.admin_only_add_members:
+            # Restricted mode: Only admins can add
+            if not user_part.is_admin:
+                raise ValueError("Only group admins can add participants to this group")
+        # If admin_only_add_members is False, any member can add (no further check needed)
         
         # Get existing participant IDs
         existing = await self.db.execute(
@@ -316,6 +331,50 @@ class MessageService:
         target_participant.is_admin = is_admin
         await self.db.commit()
         return target_participant
+
+    async def update_group_settings(
+        self,
+        conversation_id: uuid.UUID,
+        admin_user_id: uuid.UUID,
+        admin_only_add_members: bool
+    ) -> Conversation:
+        """
+        Update group chat settings.
+        
+        Args:
+            conversation_id: UUID of the group chat
+            admin_user_id: UUID of the user performing the action (must be admin)
+            admin_only_add_members: If True, only admins can add members. If False, any member can add.
+            
+        Returns:
+            Updated Conversation object
+            
+        Raises:
+            ValueError: If not authorized or not a group chat
+        """
+        # Verify conversation is a group
+        conv = await self.db.get(Conversation, conversation_id)
+        if not conv:
+            raise ValueError("Conversation not found")
+        if not conv.is_group:
+            raise ValueError("Can only update settings for group chats")
+        
+        # Verify requesting user is admin
+        admin_check = await self.db.execute(
+            select(ConversationParticipant).where(
+                ConversationParticipant.conversation_id == conversation_id,
+                ConversationParticipant.user_id == admin_user_id,
+                ConversationParticipant.is_admin == True
+            )
+        )
+        if not admin_check.scalar_one_or_none():
+            raise ValueError("Only group admins can update group settings")
+        
+        # Update setting
+        conv.admin_only_add_members = admin_only_add_members
+        await self.db.commit()
+        
+        return await self.get_conversation_by_id(conversation_id, admin_user_id)
 
     # ============================================
     # MESSAGE MANAGEMENT

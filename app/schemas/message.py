@@ -201,12 +201,17 @@ class CreateGroupChat(BaseModel):
         name: Group chat name (1-100 characters)
         description: Optional group description (max 500 characters)
         participant_ids: List of user UUIDs to add as initial members
+        admin_only_add_members: If True, only admins can add members. If False (default), any member can add.
     """
     name: str = Field(..., min_length=1, max_length=100)
     description: Optional[str] = Field(None, max_length=500)
     participant_ids: List[uuid.UUID] = Field(
         ...,
         description="List of user IDs to add to the group"
+    )
+    admin_only_add_members: bool = Field(
+        default=False,
+        description="If True, only admins can add members. If False, any member can add new members."
     )
 
     @field_validator('participant_ids')
@@ -228,7 +233,8 @@ class CreateGroupChat(BaseModel):
                     "participant_ids": [
                         "550e8400-e29b-41d4-a716-446655440001",
                         "550e8400-e29b-41d4-a716-446655440002"
-                    ]
+                    ],
+                    "admin_only_add_members": False
                 }
             ]
         }
@@ -283,6 +289,28 @@ class RemoveParticipantRequest(BaseModel):
         description="User ID to remove from the group chat"
     )
 
+class UpdateGroupSettingsRequest(BaseModel):
+    """
+    Schema for updating group chat settings.
+    
+    Attributes:
+        admin_only_add_members: If True, only admins can add members. If False, any member can add.
+    """
+    admin_only_add_members: bool = Field(
+        ...,
+        description="If True, only admins can add members. If False, any member can add new members."
+    )
+    
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "admin_only_add_members": True
+                }
+            ]
+        }
+    )
+
 class ConversationParticipantInfo(BaseModel):
     """
     Participant information for conversation display.
@@ -319,6 +347,7 @@ class ConversationResponse(BaseModel):
         created_at: When conversation was created
         updated_at: When conversation was last updated
         unread_count: Number of unread messages for current user
+        admin_only_add_members: If True, only admins can add members (groups only)
         other_participant: Other user info (only for 1-on-1 chats)
         participants: List of all participants (includes all for groups, both for 1-on-1)
     """
@@ -330,6 +359,7 @@ class ConversationResponse(BaseModel):
     created_at: datetime
     updated_at: Optional[datetime] = None
     unread_count: int = 0
+    admin_only_add_members: bool = False
     
     # For 1-on-1: the other participant
     other_participant: Optional[ConversationParticipantInfo] = None
@@ -347,6 +377,7 @@ class ConversationResponse(BaseModel):
                     "last_message_at": "2024-12-15T10:00:00Z",
                     "created_at": "2024-12-15T09:00:00Z",
                     "unread_count": 3,
+                    "admin_only_add_members": False,
                     "other_participant": {
                         "id": "660e8400-e29b-41d4-a716-446655440001",
                         "username": "john_doe",
@@ -361,6 +392,7 @@ class ConversationResponse(BaseModel):
                     "last_message_at": "2024-12-15T14:30:00Z",
                     "created_at": "2024-12-01T09:00:00Z",
                     "unread_count": 5,
+                    "admin_only_add_members": True,
                     "participants": [
                         {
                             "id": "660e8400-e29b-41d4-a716-446655440001",

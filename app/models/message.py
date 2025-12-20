@@ -25,6 +25,10 @@ class Conversation(Base):
     group_image_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     description: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     
+    # NEW: Group permission settings
+    # If True, only admins can add members. If False, any member can add.
+    admin_only_add_members: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    
     # Updated for better list-view performance
     last_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     last_message_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)

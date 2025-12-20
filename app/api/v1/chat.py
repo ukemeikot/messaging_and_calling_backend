@@ -33,7 +33,8 @@ from app.schemas.message import (
     WebSocketMessage,
     AddParticipantsRequest,
     RemoveParticipantRequest,
-    ConversationParticipantInfo
+    ConversationParticipantInfo,
+    UpdateGroupSettingsRequest
 )
 from app.services.chat_service import MessageService
 from app.services.user_service import UserService
@@ -106,6 +107,11 @@ async def create_conversation(
     - Creator becomes an admin automatically
     - All specified participant_ids will be added as members
     
+    **Permissions:**
+    - `admin_only_add_members`: Controls who can add new members
+        - `false` (default): Any member can add new members
+        - `true`: Only admins can add new members
+    
     **Returns:**
     - The created group conversation with all participant details
     """
@@ -120,7 +126,8 @@ async def create_group_chat(
         creator_id=current_user.id, 
         name=group_data.name,
         description=group_data.description,
-        participant_ids=group_data.participant_ids
+        participant_ids=group_data.participant_ids,
+        admin_only_add_members=group_data.admin_only_add_members
     )
 
 @router.get(
@@ -182,8 +189,11 @@ async def get_conversation(
     
     **Requirements:**
     - Conversation must be a group chat (not 1-on-1)
-    - Current user must be an admin of the group
     - Participant IDs must be valid user accounts
+    
+    **Permissions:**
+    - If group's `admin_only_add_members` is `true`: Only admins can add members
+    - If group's `admin_only_add_members` is `false`: Any member can add new members
     
     **Notifications:**
     - All existing participants receive a 'participants_added' event via WebSocket
@@ -322,6 +332,56 @@ async def toggle_admin_status(
         )
         
         return participant
+    except ValueError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+
+@router.patch(
+    "/conversations/{conversation_id}/settings",
+    response_model=ConversationResponse,
+    summary="Update group chat settings",
+    description="""
+    Update group chat settings (admin only).
+    
+    **Requirements:**
+    - Current user must be an admin of the group
+    - Conversation must be a group chat
+    
+    **Settings:**
+    - `admin_only_add_members`: Controls who can add new members
+        - `true`: Only admins can add members
+        - `false`: Any member can add new members
+    
+    **Returns:**
+    - Updated conversation with new settings
+    """
+)
+async def update_group_settings(
+    conversation_id: uuid.UUID,
+    settings: UpdateGroupSettingsRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    service = MessageService(db)
+    try:
+        conversation = await service.update_group_settings(
+            conversation_id=conversation_id,
+            admin_user_id=current_user.id,
+            admin_only_add_members=settings.admin_only_add_members
+        )
+        
+        # Broadcast settings change
+        await broadcast_event(
+            service,
+            conversation_id,
+            "group_settings_updated",
+            {
+                "conversation_id": str(conversation_id),
+                "admin_only_add_members": settings.admin_only_add_members,
+                "updated_by": str(current_user.id)
+            }
+        )
+        
+        return conversation
     except ValueError as e:
         raise HTTPException(status_code=403, detail=str(e))
 
