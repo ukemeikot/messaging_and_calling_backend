@@ -25,7 +25,7 @@ class Conversation(Base):
     group_image_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     description: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     
-    # Logic support columns
+    # Updated for better list-view performance
     last_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     last_message_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     
@@ -33,7 +33,7 @@ class Conversation(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now(), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     participants: Mapped[List["ConversationParticipant"]] = relationship("ConversationParticipant", back_populates="conversation", cascade="all, delete-orphan")
-    messages: Mapped[List["Message"]] = relationship("Message", back_populates="conversation", cascade="all, delete-orphan", order_by="Message.created_at")
+    messages: Mapped[List["Message"]] = relationship("Message", back_populates="conversation", cascade="all, delete-orphan", order_by="desc(Message.created_at)")
 
 class ConversationParticipant(Base):
     __tablename__ = "conversation_participants"
@@ -42,15 +42,15 @@ class ConversationParticipant(Base):
     conversation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     
-    # Support for read receipts
+    # Crucial for calculating unread counts
     last_read_message_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
     last_read_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now(), server_default=func.now(), nullable=False)
 
-    conversation = relationship("Conversation", back_populates="participants")
-    user = relationship("User")
+    conversation: Mapped["Conversation"] = relationship("Conversation", back_populates="participants")
+    user = relationship("User") # Assuming User model is imported or available via string
 
 class Message(Base):
     __tablename__ = "messages"
@@ -63,15 +63,16 @@ class Message(Base):
     message_type: Mapped[MessageType] = mapped_column(SQLEnum(MessageType, name="message_type"), default=MessageType.TEXT, nullable=False)
     media_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     
-    # Edit/Delete Support
     is_edited: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     edited_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     reply_to_message_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("messages.id"), nullable=True)
-    is_read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False) 
+    
+    # We remove is_read here and rely on ConversationParticipant.last_read_message_id
+    
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now(), server_default=func.now(), nullable=False)
 
-    conversation = relationship("Conversation", back_populates="messages")
+    conversation: Mapped["Conversation"] = relationship("Conversation", back_populates="messages")
     sender = relationship("User")
