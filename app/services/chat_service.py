@@ -51,9 +51,10 @@ class MessageService:
             raise ValueError("Must be accepted contacts to start a conversation")
         
         # Check for existing conversation
+        # FIX: We use a check that handles potential duplicates gracefully
         existing = await self.get_conversation_between_users(user_id, participant_id)
         if existing: 
-            return existing
+            return await self.get_conversation_by_id(existing.id, user_id)
         
         # Create new conversation
         conv = Conversation(is_group=False)
@@ -132,30 +133,13 @@ class MessageService:
     ) -> Conversation:
         """
         Add new participants to an existing group chat.
-        
-        Permission is based on the group's admin_only_add_members setting:
-        - If True: Only admins can add members
-        - If False: Any group member can add members
-        
-        Args:
-            conversation_id: UUID of the group chat
-            admin_user_id: UUID of the user performing the action
-            participant_ids: List of user UUIDs to add
-            
-        Returns:
-            Updated Conversation object with new participants
-            
-        Raises:
-            ValueError: If not a group, user not authorized, or participants already exist
         """
-        # Verify conversation is a group
         conv = await self.db.get(Conversation, conversation_id)
         if not conv:
             raise ValueError("Conversation not found")
         if not conv.is_group:
             raise ValueError("Can only add participants to group chats")
         
-        # Check if user is a participant
         user_participant = await self.db.execute(
             select(ConversationParticipant).where(
                 ConversationParticipant.conversation_id == conversation_id,
@@ -167,35 +151,22 @@ class MessageService:
         if not user_part:
             raise ValueError("You must be a member of this group to add participants")
         
-        # Check permissions based on group settings
-        if conv.admin_only_add_members:
-            # Restricted mode: Only admins can add
-            if not user_part.is_admin:
-                raise ValueError("Only group admins can add participants to this group")
-        # If admin_only_add_members is False, any member can add (no further check needed)
+        if conv.admin_only_add_members and not user_part.is_admin:
+            raise ValueError("Only group admins can add participants to this group")
         
-        # Get existing participant IDs
         existing = await self.db.execute(
             select(ConversationParticipant.user_id).where(
                 ConversationParticipant.conversation_id == conversation_id
             )
         )
         existing_ids = set(existing.scalars().all())
-        
-        # Filter out participants already in group
         new_participants = [pid for pid in participant_ids if pid not in existing_ids]
         
         if not new_participants:
             raise ValueError("All specified users are already participants")
         
-        # Add new participants
         for pid in new_participants:
-            self.db.add(
-                ConversationParticipant(
-                    conversation_id=conversation_id,
-                    user_id=pid
-                )
-            )
+            self.db.add(ConversationParticipant(conversation_id=conversation_id, user_id=pid))
         
         await self.db.commit()
         return await self.get_conversation_by_id(conversation_id, admin_user_id)
@@ -208,27 +179,14 @@ class MessageService:
     ) -> None:
         """
         Remove a participant from a group chat.
-        
-        Args:
-            conversation_id: UUID of the group chat
-            admin_user_id: UUID of the user performing the action
-            user_id_to_remove: UUID of the user to remove
-            
-        Raises:
-            ValueError: If not authorized or trying to remove last admin
         """
-        # Verify conversation is a group
         conv = await self.db.get(Conversation, conversation_id)
-        if not conv:
-            raise ValueError("Conversation not found")
-        if not conv.is_group:
-            raise ValueError("Can only remove participants from group chats")
+        if not conv or not conv.is_group:
+            raise ValueError("Group conversation not found")
         
-        # User can remove themselves OR must be admin to remove others
         is_self_removal = (admin_user_id == user_id_to_remove)
         
         if not is_self_removal:
-            # Verify user is admin
             admin_check = await self.db.execute(
                 select(ConversationParticipant).where(
                     ConversationParticipant.conversation_id == conversation_id,
@@ -239,7 +197,6 @@ class MessageService:
             if not admin_check.scalar_one_or_none():
                 raise ValueError("Only group admins can remove other participants")
         
-        # Get participant to remove
         participant = await self.db.execute(
             select(ConversationParticipant).where(
                 ConversationParticipant.conversation_id == conversation_id,
@@ -249,9 +206,8 @@ class MessageService:
         participant_obj = participant.scalar_one_or_none()
         
         if not participant_obj:
-            raise ValueError("User is not a participant in this conversation")
+            raise ValueError("User is not a participant")
         
-        # Prevent removing last admin
         if participant_obj.is_admin:
             admin_count = await self.db.execute(
                 select(func.count(ConversationParticipant.id)).where(
@@ -260,9 +216,8 @@ class MessageService:
                 )
             )
             if admin_count.scalar_one() <= 1:
-                raise ValueError("Cannot remove the last admin. Promote another user first.")
+                raise ValueError("Cannot remove the last admin")
         
-        # Remove participant
         await self.db.delete(participant_obj)
         await self.db.commit()
 
@@ -275,25 +230,7 @@ class MessageService:
     ) -> ConversationParticipant:
         """
         Promote or demote a group chat participant to/from admin.
-        
-        Args:
-            conversation_id: UUID of the group chat
-            admin_user_id: UUID of the user performing the action (must be admin)
-            target_user_id: UUID of the user to promote/demote
-            is_admin: True to promote, False to demote
-            
-        Returns:
-            Updated ConversationParticipant object
-            
-        Raises:
-            ValueError: If not authorized or trying to demote last admin
         """
-        # Verify conversation is a group
-        conv = await self.db.get(Conversation, conversation_id)
-        if not conv or not conv.is_group:
-            raise ValueError("Can only manage admins in group chats")
-        
-        # Verify requesting user is admin
         admin_check = await self.db.execute(
             select(ConversationParticipant).where(
                 ConversationParticipant.conversation_id == conversation_id,
@@ -304,7 +241,6 @@ class MessageService:
         if not admin_check.scalar_one_or_none():
             raise ValueError("Only group admins can change admin status")
         
-        # Get target participant
         target = await self.db.execute(
             select(ConversationParticipant).where(
                 ConversationParticipant.conversation_id == conversation_id,
@@ -316,7 +252,6 @@ class MessageService:
         if not target_participant:
             raise ValueError("Target user is not a participant")
         
-        # If demoting, ensure not the last admin
         if not is_admin and target_participant.is_admin:
             admin_count = await self.db.execute(
                 select(func.count(ConversationParticipant.id)).where(
@@ -327,7 +262,6 @@ class MessageService:
             if admin_count.scalar_one() <= 1:
                 raise ValueError("Cannot demote the last admin")
         
-        # Update admin status
         target_participant.is_admin = is_admin
         await self.db.commit()
         return target_participant
@@ -340,26 +274,11 @@ class MessageService:
     ) -> Conversation:
         """
         Update group chat settings.
-        
-        Args:
-            conversation_id: UUID of the group chat
-            admin_user_id: UUID of the user performing the action (must be admin)
-            admin_only_add_members: If True, only admins can add members. If False, any member can add.
-            
-        Returns:
-            Updated Conversation object
-            
-        Raises:
-            ValueError: If not authorized or not a group chat
         """
-        # Verify conversation is a group
         conv = await self.db.get(Conversation, conversation_id)
-        if not conv:
-            raise ValueError("Conversation not found")
-        if not conv.is_group:
-            raise ValueError("Can only update settings for group chats")
+        if not conv or not conv.is_group:
+            raise ValueError("Group chat not found")
         
-        # Verify requesting user is admin
         admin_check = await self.db.execute(
             select(ConversationParticipant).where(
                 ConversationParticipant.conversation_id == conversation_id,
@@ -370,10 +289,8 @@ class MessageService:
         if not admin_check.scalar_one_or_none():
             raise ValueError("Only group admins can update group settings")
         
-        # Update setting
         conv.admin_only_add_members = admin_only_add_members
         await self.db.commit()
-        
         return await self.get_conversation_by_id(conversation_id, admin_user_id)
 
     # ============================================
@@ -389,20 +306,6 @@ class MessageService:
     ) -> Message:
         """
         Send a new message in a conversation.
-        
-        Updates the conversation's last_message metadata for preview display.
-        
-        Args:
-            conversation_id: UUID of the conversation
-            sender_id: UUID of the user sending the message
-            content: Message text content
-            **kwargs: Additional message fields (message_type, media_url, etc.)
-            
-        Returns:
-            The created Message object with sender details loaded
-            
-        Raises:
-            ValueError: If conversation not found
         """
         msg = Message(
             conversation_id=conversation_id, 
@@ -412,18 +315,17 @@ class MessageService:
         )
         self.db.add(msg)
         
-        # Update conversation metadata for list view
         chat = await self.db.get(Conversation, conversation_id)
+        # FIX: Guard clause to prevent "None" attribute access
         if chat is None:
             raise ValueError(f"Conversation with ID {conversation_id} not found")
             
-        chat.last_message = content[:100]  # Truncate for preview
+        chat.last_message = content[:100]
         chat.last_message_at = func.now()
         chat.updated_at = func.now()
         
         await self.db.commit()
         
-        # Return message with sender details
         res = await self.db.execute(
             select(Message).options(
                 selectinload(Message.sender)
@@ -439,17 +341,6 @@ class MessageService:
     ) -> Message:
         """
         Edit an existing message's content.
-        
-        Args:
-            message_id: UUID of the message to edit
-            user_id: UUID of the user attempting to edit (must be sender)
-            new_content: New message content
-            
-        Returns:
-            The updated Message object
-            
-        Raises:
-            ValueError: If message not found, deleted, or user not authorized
         """
         res = await self.db.execute(
             select(Message).where(
@@ -474,17 +365,7 @@ class MessageService:
         user_id: uuid.UUID
     ) -> Message:
         """
-        Soft-delete a message (marks as deleted, doesn't remove from database).
-        
-        Args:
-            message_id: UUID of the message to delete
-            user_id: UUID of the user attempting to delete (must be sender)
-            
-        Returns:
-            The deleted Message object
-            
-        Raises:
-            ValueError: If message not found or user not authorized
+        Soft-delete a message.
         """
         res = await self.db.execute(
             select(Message).where(
@@ -510,16 +391,6 @@ class MessageService:
     ) -> bool:
         """
         Mark all messages up to a specific message as read.
-        
-        Updates the user's last_read_message_id and last_read_at timestamp.
-        
-        Args:
-            conversation_id: UUID of the conversation
-            user_id: UUID of the user marking as read
-            last_read_message_id: UUID of the last message read
-            
-        Returns:
-            True if successful, False if user not a participant
         """
         res = await self.db.execute(
             select(ConversationParticipant).where(
@@ -550,16 +421,6 @@ class MessageService:
     ) -> List[Message]:
         """
         Retrieve messages from a conversation with pagination.
-        
-        Args:
-            conversation_id: UUID of the conversation
-            user_id: UUID of the requesting user (for permission check)
-            limit: Maximum number of messages to return
-            offset: Number of messages to skip (offset-based pagination)
-            before_message_id: Return messages before this ID (cursor-based pagination)
-            
-        Returns:
-            List of Message objects ordered by newest first
         """
         query = select(Message).options(
             selectinload(Message.sender)
@@ -568,7 +429,6 @@ class MessageService:
             Message.is_deleted == False
         )
         
-        # Cursor-based pagination (preferred for chat)
         if before_message_id:
             ts_res = await self.db.execute(
                 select(Message.created_at).where(Message.id == before_message_id)
@@ -584,14 +444,6 @@ class MessageService:
     async def get_all_participants(self, conversation_id: uuid.UUID) -> List[uuid.UUID]:
         """
         Get list of all user IDs participating in a conversation.
-        
-        Used for broadcasting events via WebSocket.
-        
-        Args:
-            conversation_id: UUID of the conversation
-            
-        Returns:
-            List of participant user UUIDs
         """
         res = await self.db.execute(
             select(ConversationParticipant.user_id).where(
@@ -607,13 +459,6 @@ class MessageService:
     ) -> Conversation:
         """
         Get a conversation by ID with all related data loaded.
-        
-        Args:
-            conv_id: UUID of the conversation
-            user_id: UUID of the requesting user
-            
-        Returns:
-            Conversation object with participants and messages loaded
         """
         res = await self.db.execute(
             select(Conversation).options(
@@ -631,15 +476,6 @@ class MessageService:
     ) -> List[Tuple[Conversation, int]]:
         """
         Get all conversations for a user with unread counts.
-        
-        Args:
-            user_id: UUID of the user
-            limit: Maximum number of conversations to return
-            offset: Number of conversations to skip
-            
-        Returns:
-            List of tuples: (Conversation object, unread_count)
-            Ordered by most recent activity
         """
         res = await self.db.execute(
             select(Conversation, ConversationParticipant)
@@ -672,22 +508,13 @@ class MessageService:
     ) -> int:
         """
         Calculate number of unread messages for a user in a conversation.
-        
-        Args:
-            conversation_id: UUID of the conversation
-            user_id: UUID of the user
-            last_read_message_id: UUID of last message the user read
-            
-        Returns:
-            Count of unread messages
         """
         query = select(func.count(Message.id)).where(
             Message.conversation_id == conversation_id, 
-            Message.sender_id != user_id,  # Don't count own messages
+            Message.sender_id != user_id, 
             Message.is_deleted == False
         )
         
-        # Only count messages after last_read_message
         if last_read_message_id:
             ts_res = await self.db.execute(
                 select(Message.created_at).where(Message.id == last_read_message_id)
@@ -706,13 +533,6 @@ class MessageService:
     ) -> Optional[Conversation]:
         """
         Find existing 1-on-1 conversation between two users.
-        
-        Args:
-            u1: First user's UUID
-            u2: Second user's UUID
-            
-        Returns:
-            Conversation object if exists, None otherwise
         """
         res = await self.db.execute(
             select(Conversation)
@@ -724,4 +544,6 @@ class MessageService:
             .group_by(Conversation.id)
             .having(func.count(ConversationParticipant.id) == 2)
         )
-        return res.scalar_one_or_none()
+        # FIX: Using .first() ensures we find the chat and return it 
+        # instead of throwing an error if duplicates exist.
+        return res.scalars().first()
