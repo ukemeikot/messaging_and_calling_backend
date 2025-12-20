@@ -1,9 +1,13 @@
 """
-Chat API Routes.
+Message and conversation API routes (REST + WebSocket).
 """
-from fastapi import APIRouter, Depends, HTTPException, status, WebSocket, WebSocketDisconnect, Query
+
+from fastapi import (
+    APIRouter, Depends, HTTPException, status, 
+    Query, WebSocket, WebSocketDisconnect
+)
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List, Optional
+from typing import List
 import uuid
 from jose import JWTError
 
@@ -11,167 +15,167 @@ from app.database import get_db
 from app.core.dependencies import get_current_user
 from app.core.security import decode_token
 from app.models.user import User
-from app.schemas.message import MessageCreate, MessageResponse, ConversationResponse, CreateGroupChat
-from app.services.chat_service import ChatService
+from app.schemas.message import (
+    ConversationCreate,
+    ConversationResponse,
+    CreateGroupChat,
+    MessageCreate,
+    MessageUpdate,
+    MessageResponse,
+    MessageListResponse,
+    WebSocketMessage
+)
+from app.services.chat_service import MessageService
 from app.services.user_service import UserService
 from app.websocket.manager import manager
-from fastapi.responses import HTMLResponse
 
-router = APIRouter(prefix="/chat", tags=["Chat"])
+router = APIRouter(
+    prefix="/messages",
+    tags=["Messaging"]
+)
 
-# --- 1. CONVERSATION MANAGEMENT ---
+# ============================================
+# CONVERSATION ENDPOINTS
+# ============================================
 
 @router.post(
-    "/conversations/direct", 
+    "/conversations",
+    # Note: Service now handles 1-on-1 logic
     response_model=ConversationResponse,
-    summary="Start Direct Message",
-    description="Start a 1-on-1 chat with another user."
+    status_code=status.HTTP_201_CREATED,
+    summary="Create 1-on-1 Conversation"
 )
-async def create_direct_chat(
-    recipient_id: uuid.UUID,
+async def create_conversation(
+    conversation_data: ConversationCreate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Creates or retrieves an existing 1-on-1 chat.
-    """
-    if recipient_id == current_user.id:
-        raise HTTPException(status_code=400, detail="Cannot chat with yourself")
-        
-    service = ChatService(db)
-    return await service.create_direct_chat(current_user.id, recipient_id)
+    service = MessageService(db)
+    try:
+        return await service.create_conversation(
+            user_id=current_user.id,
+            participant_id=conversation_data.participant_id
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 @router.post(
-    "/conversations/group", 
+    "/conversations/group",
     response_model=ConversationResponse,
-    summary="Create Group Chat",
-    description="Create a new group conversation."
+    status_code=status.HTTP_201_CREATED,
+    summary="Create Group Chat"
 )
 async def create_group_chat(
     group_data: CreateGroupChat,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    service = ChatService(db)
-    # Ensure creator is in the participant list
-    if current_user.id not in group_data.participant_ids:
-        group_data.participant_ids.append(current_user.id)
-        
-    return await service.create_group_chat(current_user.id, group_data.name, group_data.participant_ids)
+    service = MessageService(db)
+    return await service.create_group_chat(
+        creator_id=current_user.id,
+        name=group_data.name,
+        participant_ids=group_data.participant_ids
+    )
 
 @router.get(
-    "/conversations", 
+    "/conversations",
     response_model=List[ConversationResponse],
-    summary="List Conversations",
-    description="Get all your active conversations (ordered by recent activity)."
+    summary="Get user's conversations"
 )
-async def get_my_conversations(
+async def get_conversations(
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    service = ChatService(db)
-    return await service.get_user_conversations(current_user.id)
+    service = MessageService(db)
+    # Returns List[Tuple[Conversation, unread_count]]
+    results = await service.get_user_conversations(
+        user_id=current_user.id,
+        limit=limit,
+        offset=offset
+    )
+    
+    # Map to schema - Pydantic handles the Tuple -> Obj mapping via from_attributes
+    return [conv for conv, unread in results]
 
-# --- 2. MESSAGE HISTORY ---
+# ============================================
+# MESSAGE ENDPOINTS (REST)
+# ============================================
 
 @router.get(
     "/conversations/{conversation_id}/messages",
-    response_model=List[MessageResponse],
-    summary="Get Chat History",
-    description="Load previous messages for a specific conversation."
+    response_model=MessageListResponse
 )
-async def get_chat_history(
+async def get_messages(
     conversation_id: uuid.UUID,
-    limit: int = 50,
-    skip: int = 0,
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    before_message_id: uuid.UUID = Query(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Fetches the history of a chat.
-    """
-    service = ChatService(db)
-    
-    # Security: Verify user is actually in this chat
-    participants = await service.get_conversation_participants(conversation_id)
-    if current_user.id not in participants:
-        raise HTTPException(status_code=403, detail="You are not a participant in this chat")
+    service = MessageService(db)
+    try:
+        messages = await service.get_messages(
+            conversation_id=conversation_id,
+            user_id=current_user.id,
+            limit=limit,
+            offset=offset,
+            before_message_id=before_message_id
+        )
+        # Assuming you want a total count as well
+        total = await service.get_unread_count(conversation_id, current_user.id, None)
         
-    return await service.get_messages(conversation_id, limit, skip)
+        return {
+            "messages": messages,
+            "total": total,
+            "conversation_id": conversation_id,
+            "has_more": (offset + limit) < total
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=403, detail=str(e))
 
-# --- DOCUMENTATION ONLY ---
-@router.get(
-    "/ws/docs",
-    summary="WebSocket Documentation",
-    description="""
-    ## Real-Time Chat Protocol
-    
-    **Connection URL:** `ws://<domain>/api/v1/chat/ws?token=<ACCESS_TOKEN>`
-    
-    **Authentication:**
-    Pass the JWT access token as a query parameter named `token`.
-    
-    ### 1. Sending a Message (Client -> Server)
-    Send a JSON object with this structure:
-    ```json
-    {
-      "conversation_id": "uuid-string",
-      "content": "Hello World",
-      "message_type": "text"  // "text", "image", "video"
-    }
-    ```
-    
-    ### 2. Receiving a Message (Server -> Client)
-    You will receive JSON objects like this:
-    ```json
-    {
-      "id": "message-uuid",
-      "conversation_id": "conversation-uuid",
-      "content": "Hello World",
-      "sender": {
-        "id": "user-uuid",
-        "username": "john_doe",
-        "profile_picture_url": "..."
-      },
-      "created_at": "2023-10-27T10:00:00Z"
-    }
-    ```
-    """
+@router.post(
+    "/conversations/{conversation_id}/read",
+    status_code=status.HTTP_200_OK
 )
-async def get_websocket_info():
-    """
-    Returns connection information for the WebSocket.
-    """
-    return {
-        "url": "/api/v1/chat/ws",
-        "authentication": "Query Parameter 'token'",
-        "supported_types": ["text", "image", "video", "audio", "file"]
-    }
+async def mark_as_read(
+    conversation_id: uuid.UUID,
+    last_message_id: uuid.UUID = Query(...),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    service = MessageService(db)
+    success = await service.mark_messages_as_read(
+        conversation_id=conversation_id,
+        user_id=current_user.id,
+        last_read_message_id=last_message_id
+    )
+    if not success:
+        raise HTTPException(status_code=400, detail="Failed to mark as read")
+    return {"message": "Success"}
 
-# --- 3. REAL-TIME WEBSOCKET ---
+# ============================================
+# REAL-TIME WEBSOCKET
+# ============================================
 
 @router.websocket("/ws")
 async def websocket_endpoint(
     websocket: WebSocket,
-    token: str = Query(..., description="JWT Token passed in URL"), 
+    token: str = Query(...), 
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Real-time chat connection.
-    Usage: ws://domain.com/api/v1/chat/ws?token=<ACCESS_TOKEN>
+    WebSocket for real-time chat. 
+    URL: ws://domain/api/v1/messages/ws?token=JWT
     """
     try:
-        # 1. Decode Token
         payload = decode_token(token)
-        user_id_str = payload.get("user_id")
-        if not user_id_str:
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-            return
-        user_id = uuid.UUID(user_id_str)
-        
-        # 2. Check DB
+        user_id = uuid.UUID(payload.get("user_id"))
         user_service = UserService(db)
         user = await user_service.get_user_by_id(user_id)
+        
         if not user or not user.is_active:
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return
@@ -180,27 +184,32 @@ async def websocket_endpoint(
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
-    # 3. Connect
     await manager.connect(websocket, user_id)
-    service = ChatService(db)
+    service = MessageService(db)
     
     try:
         while True:
             data = await websocket.receive_json()
-            
-            # 4. Validate & Save
+            # Wrap data in schema
             try:
-                message_data = MessageCreate(**data)
-            except Exception:
-                await websocket.send_json({"error": "Invalid message format"})
-                continue
-            
-            saved_msg = await service.save_message(user_id, message_data)
-            response = MessageResponse.model_validate(saved_msg).model_dump()
-            
-            # 5. Broadcast
-            participants = await service.get_conversation_participants(message_data.conversation_id)
-            await manager.broadcast_to_conversation(response, participants)
-            
+                ws_msg = WebSocketMessage(**data)
+                if ws_msg.type == "send_message":
+                    msg_create = MessageCreate(**ws_msg.data)
+                    saved_msg = await service.send_message(
+                        sender_id=user_id,
+                        **msg_create.model_dump()
+                    )
+                    
+                    # Prepare broadcast response
+                    resp = MessageResponse.model_validate(saved_msg).model_dump()
+                    
+                    # Broadcast to participants
+                    participants = await service.get_all_participants(msg_create.conversation_id)
+                    participant_ids = [p.id for p in participants]
+                    await manager.broadcast_to_conversation(resp, participant_ids)
+                    
+            except Exception as e:
+                await websocket.send_json({"error": f"Invalid data: {str(e)}"})
+                
     except WebSocketDisconnect:
         manager.disconnect(websocket, user_id)

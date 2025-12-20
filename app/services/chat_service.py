@@ -1,36 +1,52 @@
 """
-Chat Service - Handles messaging business logic.
+Message service - handles conversations and messaging logic.
 """
+
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc, func
+from sqlalchemy import select, and_, or_, func, desc
 from sqlalchemy.orm import selectinload
-from typing import List, Sequence
+from app.models.message import Conversation, ConversationParticipant, Message, MessageType
+from app.models.user import User
+from app.models.contact import Contact, ContactStatus
+from typing import Optional, List, Tuple
+from datetime import datetime, timezone
 import uuid
 
-from app.models.message import Conversation, ConversationParticipant, Message, MessageType
-from app.schemas.message import MessageCreate
-
-class ChatService:
+class MessageService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def create_direct_chat(self, user_id: uuid.UUID, recipient_id: uuid.UUID) -> Conversation:
-        """Create or get existing DM."""
-        # 1. Check if DM already exists
-        # We query for a conversation where both users are participants and is_group=False
-        # (Simplified logic: creating new one for MVP reliability)
-        new_chat = Conversation(is_group=False)
-        self.db.add(new_chat)
+    # ============================================
+    # CONVERSATION MANAGEMENT
+    # ============================================
+    
+    async def create_conversation(self, user_id: uuid.UUID, participant_id: uuid.UUID) -> Conversation:
+        """Create or get 1-on-1 DM."""
+        if user_id == participant_id:
+            raise ValueError("Cannot create conversation with yourself")
+        
+        from app.services.contact_service import ContactService
+        contact_service = ContactService(self.db)
+        relationship = await contact_service.get_relationship(user_id, participant_id)
+        
+        if not relationship or relationship.status != ContactStatus.ACCEPTED:
+            raise ValueError("Can only message accepted contacts")
+        
+        existing = await self.get_conversation_between_users(user_id, participant_id)
+        if existing:
+            return existing
+        
+        conversation = Conversation(is_group=False)
+        self.db.add(conversation)
         await self.db.flush()
         
-        p1 = ConversationParticipant(conversation_id=new_chat.id, user_id=user_id)
-        p2 = ConversationParticipant(conversation_id=new_chat.id, user_id=recipient_id)
-        
+        p1 = ConversationParticipant(conversation_id=conversation.id, user_id=user_id)
+        p2 = ConversationParticipant(conversation_id=conversation.id, user_id=participant_id)
         self.db.add_all([p1, p2])
-        await self.db.commit()
         
-        # Return with participants loaded
-        return await self._get_conversation_by_id(new_chat.id)
+        await self.db.commit()
+        await self.db.refresh(conversation)
+        return conversation
 
     async def create_group_chat(self, creator_id: uuid.UUID, name: str, participant_ids: List[uuid.UUID]) -> Conversation:
         """Create a group chat."""
@@ -38,99 +54,127 @@ class ChatService:
         self.db.add(group)
         await self.db.flush()
         
-        # Add admin
         self.db.add(ConversationParticipant(conversation_id=group.id, user_id=creator_id, is_admin=True))
-        
-        # Add members
         for pid in participant_ids:
             if pid != creator_id:
                 self.db.add(ConversationParticipant(conversation_id=group.id, user_id=pid))
                 
         await self.db.commit()
-        return await self._get_conversation_by_id(group.id)
+        await self.db.refresh(group)
+        return group
 
-    async def save_message(self, sender_id: uuid.UUID, message_data: MessageCreate) -> Message:
-        """Save message."""
-        try:
-            msg_type_enum = MessageType(message_data.message_type)
-        except ValueError:
-            msg_type_enum = MessageType.TEXT
-
-        msg = Message(
-            conversation_id=message_data.conversation_id,
-            sender_id=sender_id,
-            content=message_data.content,
-            message_type=msg_type_enum,
-            media_url=message_data.media_url, 
-            reply_to_message_id=message_data.reply_to_message_id
-        )
-        self.db.add(msg)
-        
-        # Update timestamp
-        chat = await self.db.get(Conversation, message_data.conversation_id)
-        if chat:
-            chat.updated_at = func.now()
-            
-        await self.db.commit()
-        await self.db.refresh(msg)
-        
-        # Load sender for response
+    async def get_user_conversations(self, user_id: uuid.UUID, limit: int = 50, offset: int = 0) -> List[Tuple[Conversation, int]]:
+        """Get list of conversations with unread counts."""
         result = await self.db.execute(
-            select(Message).options(selectinload(Message.sender)).where(Message.id == msg.id)
-        )
-        return result.scalar_one()
-
-    async def get_user_conversations(self, user_id: uuid.UUID) -> Sequence[Conversation]:
-        """
-        Get all conversations with Participants loaded.
-        """
-        # 1. Get IDs of chats user is in
-        subquery = select(ConversationParticipant.conversation_id).where(
-            ConversationParticipant.user_id == user_id
-        )
-        
-        # 2. Fetch Chats + Participants + Users + Last Message
-        query = select(Conversation)\
+            select(Conversation, ConversationParticipant)
+            .join(ConversationParticipant)
             .options(
-                selectinload(Conversation.participants).selectinload(ConversationParticipant.user),
-                selectinload(Conversation.messages)  # Optional: Optimizing last_message loading is better done with a dedicated subquery in prod
-            )\
-            .where(Conversation.id.in_(subquery))\
+                selectinload(Conversation.participants).selectinload(ConversationParticipant.user)
+            )
+            .where(ConversationParticipant.user_id == user_id)
             .order_by(desc(Conversation.updated_at))
-        
-        result = await self.db.execute(query)
-        conversations = result.scalars().all()
-        
-        # Manual fix for 'last_message' if not using a complex hybrid_property
-        # This is a simple way to populate the field for the schema
-        for chat in conversations:
-            if chat.messages:
-                # Sort messages to find the last one (Python side sort)
-                chat.last_message = sorted(chat.messages, key=lambda m: m.created_at)[-1]
-        
-        return conversations
-
-    async def get_messages(self, conversation_id: uuid.UUID, limit: int = 50, skip: int = 0) -> Sequence[Message]:
-        query = select(Message)\
-            .options(selectinload(Message.sender))\
-            .where(Message.conversation_id == conversation_id)\
-            .order_by(desc(Message.created_at))\
-            .offset(skip)\
             .limit(limit)
-        result = await self.db.execute(query)
-        return result.scalars().all()
-
-    async def get_conversation_participants(self, conversation_id: uuid.UUID) -> List[uuid.UUID]:
-        query = select(ConversationParticipant.user_id).where(
-            ConversationParticipant.conversation_id == conversation_id
+            .offset(offset)
         )
+        
+        rows = result.all()
+        conversations_with_unread = []
+        for conv, participant in rows:
+            unread_count = await self.get_unread_count(conv.id, user_id, participant.last_read_message_id)
+            conversations_with_unread.append((conv, unread_count))
+        return conversations_with_unread
+
+    async def get_conversation_by_id(self, conversation_id: uuid.UUID, user_id: uuid.UUID) -> Optional[Conversation]:
+        """Verify membership and return conversation."""
+        result = await self.db.execute(
+            select(Conversation).join(ConversationParticipant)
+            .where(Conversation.id == conversation_id, ConversationParticipant.user_id == user_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_all_participants(self, conversation_id: uuid.UUID) -> List[User]:
+        """Used by WebSocket broadcast logic."""
+        result = await self.db.execute(
+            select(User).join(ConversationParticipant).where(ConversationParticipant.conversation_id == conversation_id)
+        )
+        return list(result.scalars().all())
+
+    # ============================================
+    # MESSAGE MANAGEMENT
+    # ============================================
+    
+    async def send_message(self, conversation_id: uuid.UUID, sender_id: uuid.UUID, content: str, 
+                           message_type: str = "text", media_url: Optional[str] = None, 
+                           reply_to_message_id: Optional[uuid.UUID] = None) -> Message:
+        """Saves message and updates preview."""
+        message = Message(
+            conversation_id=conversation_id, sender_id=sender_id, content=content,
+            message_type=MessageType(message_type), media_url=media_url, reply_to_message_id=reply_to_message_id
+        )
+        self.db.add(message)
+        
+        chat_res = await self.db.execute(select(Conversation).where(Conversation.id == conversation_id))
+        chat = chat_res.scalar_one()
+        chat.last_message = content[:100]
+        chat.last_message_at = func.now()
+        chat.updated_at = func.now()
+        
+        await self.db.commit()
+        res = await self.db.execute(select(Message).options(selectinload(Message.sender)).where(Message.id == message.id))
+        return res.scalar_one()
+
+    async def edit_message(self, message_id: uuid.UUID, user_id: uuid.UUID, new_content: str) -> Message:
+        """Logic for PUT endpoint."""
+        result = await self.db.execute(select(Message).where(Message.id == message_id, Message.sender_id == user_id, Message.is_deleted == False))
+        message = result.scalar_one_or_none()
+        if not message: raise ValueError("Message not found or cannot be edited")
+        message.content = new_content
+        message.is_edited = True
+        message.edited_at = func.now()
+        await self.db.commit()
+        await self.db.refresh(message)
+        return message
+
+    async def delete_message(self, message_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+        """Soft delete logic."""
+        result = await self.db.execute(select(Message).where(Message.id == message_id, Message.sender_id == user_id))
+        message = result.scalar_one_or_none()
+        if not message: raise ValueError("Message not found")
+        message.is_deleted = True
+        message.deleted_at = func.now()
+        message.content = "This message was deleted"
+        await self.db.commit()
+        return True
+
+    async def mark_messages_as_read(self, conversation_id: uuid.UUID, user_id: uuid.UUID, last_read_message_id: uuid.UUID) -> bool:
+        """Logic for the /read endpoint."""
+        result = await self.db.execute(select(ConversationParticipant).where(ConversationParticipant.conversation_id == conversation_id, ConversationParticipant.user_id == user_id))
+        participant = result.scalar_one_or_none()
+        if not participant: return False
+        participant.last_read_message_id = last_read_message_id
+        participant.last_read_at = func.now()
+        await self.db.commit()
+        return True
+
+    async def get_messages(self, conversation_id: uuid.UUID, user_id: uuid.UUID, limit: int = 50, offset: int = 0, before_message_id: Optional[uuid.UUID] = None) -> List[Message]:
+        query = select(Message).options(selectinload(Message.sender)).where(Message.conversation_id == conversation_id, Message.is_deleted == False)
+        if before_message_id:
+            ts_res = await self.db.execute(select(Message.created_at).where(Message.id == before_message_id))
+            ts = ts_res.scalar_one_or_none()
+            if ts: query = query.where(Message.created_at < ts)
+        query = query.order_by(desc(Message.created_at)).limit(limit).offset(offset)
         result = await self.db.execute(query)
         return list(result.scalars().all())
 
-    # Helper to return a single conversation with all relations loaded
-    async def _get_conversation_by_id(self, conversation_id: uuid.UUID) -> Conversation:
-        query = select(Conversation)\
-            .options(selectinload(Conversation.participants).selectinload(ConversationParticipant.user))\
-            .where(Conversation.id == conversation_id)
+    async def get_unread_count(self, conversation_id: uuid.UUID, user_id: uuid.UUID, last_read_message_id: Optional[uuid.UUID]) -> int:
+        query = select(func.count(Message.id)).where(Message.conversation_id == conversation_id, Message.sender_id != user_id, Message.is_deleted == False)
+        if last_read_message_id:
+            ts_res = await self.db.execute(select(Message.created_at).where(Message.id == last_read_message_id))
+            ts = ts_res.scalar_one_or_none()
+            if ts: query = query.where(Message.created_at > ts)
         result = await self.db.execute(query)
         return result.scalar_one()
+
+    async def get_conversation_between_users(self, u1: uuid.UUID, u2: uuid.UUID) -> Optional[Conversation]:
+        result = await self.db.execute(select(Conversation).join(ConversationParticipant).where(Conversation.is_group == False, ConversationParticipant.user_id.in_([u1, u2])).group_by(Conversation.id).having(func.count(ConversationParticipant.id) == 2))
+        return result.scalar_one_or_none()
