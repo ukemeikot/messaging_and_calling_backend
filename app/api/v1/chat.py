@@ -1,5 +1,5 @@
 """
-Message and conversation API routes (REST + WebSocket).
+Complete Messaging API - REST and WebSocket routes.
 """
 
 from fastapi import (
@@ -23,6 +23,8 @@ from app.schemas.message import (
     MessageUpdate,
     MessageResponse,
     MessageListResponse,
+    MessageSender,
+    ConversationParticipantInfo,
     WebSocketMessage
 )
 from app.services.chat_service import MessageService
@@ -35,12 +37,11 @@ router = APIRouter(
 )
 
 # ============================================
-# CONVERSATION ENDPOINTS
+# CONVERSATION ENDPOINTS (REST)
 # ============================================
 
 @router.post(
     "/conversations",
-    # Note: Service now handles 1-on-1 logic
     response_model=ConversationResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Create 1-on-1 Conversation"
@@ -80,7 +81,7 @@ async def create_group_chat(
 @router.get(
     "/conversations",
     response_model=List[ConversationResponse],
-    summary="Get user's conversations"
+    summary="List All Conversations"
 )
 async def get_conversations(
     limit: int = Query(50, ge=1, le=100),
@@ -89,14 +90,9 @@ async def get_conversations(
     db: AsyncSession = Depends(get_db)
 ):
     service = MessageService(db)
-    # Returns List[Tuple[Conversation, unread_count]]
-    results = await service.get_user_conversations(
-        user_id=current_user.id,
-        limit=limit,
-        offset=offset
-    )
-    
-    # Map to schema - Pydantic handles the Tuple -> Obj mapping via from_attributes
+    results = await service.get_user_conversations(current_user.id, limit, offset)
+    # Service returns List[Tuple[Conversation, unread_count]]
+    # ConversationResponse handles this via from_attributes
     return [conv for conv, unread in results]
 
 # ============================================
@@ -124,9 +120,7 @@ async def get_messages(
             offset=offset,
             before_message_id=before_message_id
         )
-        # Assuming you want a total count as well
         total = await service.get_unread_count(conversation_id, current_user.id, None)
-        
         return {
             "messages": messages,
             "total": total,
@@ -136,10 +130,32 @@ async def get_messages(
     except ValueError as e:
         raise HTTPException(status_code=403, detail=str(e))
 
-@router.post(
-    "/conversations/{conversation_id}/read",
-    status_code=status.HTTP_200_OK
-)
+@router.put("/{message_id}", response_model=MessageResponse)
+async def edit_message(
+    message_id: uuid.UUID,
+    message_data: MessageUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    service = MessageService(db)
+    try:
+        return await service.edit_message(message_id, current_user.id, message_data.content)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.delete("/{message_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_message(
+    message_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    service = MessageService(db)
+    try:
+        await service.delete_message(message_id, current_user.id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.post("/conversations/{conversation_id}/read")
 async def mark_as_read(
     conversation_id: uuid.UUID,
     last_message_id: uuid.UUID = Query(...),
@@ -147,14 +163,10 @@ async def mark_as_read(
     db: AsyncSession = Depends(get_db)
 ):
     service = MessageService(db)
-    success = await service.mark_messages_as_read(
-        conversation_id=conversation_id,
-        user_id=current_user.id,
-        last_read_message_id=last_message_id
-    )
+    success = await service.mark_messages_as_read(conversation_id, current_user.id, last_message_id)
     if not success:
         raise HTTPException(status_code=400, detail="Failed to mark as read")
-    return {"message": "Success"}
+    return {"status": "success"}
 
 # ============================================
 # REAL-TIME WEBSOCKET
@@ -163,12 +175,12 @@ async def mark_as_read(
 @router.websocket("/ws")
 async def websocket_endpoint(
     websocket: WebSocket,
-    token: str = Query(...), 
+    token: str = Query(..., description="JWT Token"), 
     db: AsyncSession = Depends(get_db)
 ):
     """
-    WebSocket for real-time chat. 
-    URL: ws://domain/api/v1/messages/ws?token=JWT
+    Real-time chat endpoint.
+    URL: ws://domain/api/v1/messages/ws?token=ACCESS_TOKEN
     """
     try:
         payload = decode_token(token)
@@ -190,22 +202,27 @@ async def websocket_endpoint(
     try:
         while True:
             data = await websocket.receive_json()
-            # Wrap data in schema
             try:
+                # Wrap data in WebSocket Schema
                 ws_msg = WebSocketMessage(**data)
+                
                 if ws_msg.type == "send_message":
                     msg_create = MessageCreate(**ws_msg.data)
+                    # Save via Service
                     saved_msg = await service.send_message(
+                        conversation_id=msg_create.conversation_id,
                         sender_id=user_id,
-                        **msg_create.model_dump()
+                        content=msg_create.content,
+                        message_type=msg_create.message_type,
+                        media_url=msg_create.media_url,
+                        reply_to_message_id=msg_create.reply_to_message_id
                     )
                     
-                    # Prepare broadcast response
+                    # Prepare broadcast
                     resp = MessageResponse.model_validate(saved_msg).model_dump()
-                    
-                    # Broadcast to participants
                     participants = await service.get_all_participants(msg_create.conversation_id)
                     participant_ids = [p.id for p in participants]
+                    
                     await manager.broadcast_to_conversation(resp, participant_ids)
                     
             except Exception as e:
