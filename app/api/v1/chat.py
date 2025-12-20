@@ -13,9 +13,10 @@ from fastapi import (
     Query, WebSocket, WebSocketDisconnect
 )
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List
+from typing import List, Optional
 import uuid
 from jose import JWTError
+from datetime import datetime
 
 from app.database import get_db
 from app.core.dependencies import get_current_user
@@ -117,7 +118,8 @@ async def create_group_chat(
     service = MessageService(db)
     return await service.create_group_chat(
         creator_id=current_user.id, 
-        name=group_data.name, 
+        name=group_data.name,
+        description=group_data.description,
         participant_ids=group_data.participant_ids
     )
 
@@ -399,11 +401,14 @@ async def get_messages(
         before_message_id=before_message_id
     )
     
+    # Convert Message models to MessageResponse schemas
+    message_responses = [MessageResponse.model_validate(msg) for msg in messages]
+    
     # Get total count for pagination
     total = len(messages)  # Simplified; ideally query total separately
     
     return MessageListResponse(
-        messages=messages,
+        messages=message_responses,
         total=total,
         conversation_id=conversation_id,
         has_more=len(messages) == limit
@@ -526,36 +531,31 @@ async def websocket_endpoint(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    WebSocket endpoint for real-time messaging features.
+    Enhanced WebSocket endpoint for real-time messaging.
     
     **Authentication:**
     - Requires valid JWT token passed as query parameter
     - Connection closed with 1008 if authentication fails
     
-    **Incoming Events:**
-    - `typing`: Broadcast typing indicator to other participants
-        ```json
-        {
-            "type": "typing",
-            "conversation_id": "uuid-here"
-        }
-        ```
+    **Incoming Message Types:**
     
-    **Outgoing Events:**
-    - `new_message`: New message sent in a conversation
-    - `message_edited`: Message content updated
-    - `message_deleted`: Message removed
-    - `user_typing`: Another user is typing
-    - `participants_added`: Users added to group
-    - `participant_removed`: User removed from group
-    - `admin_status_changed`: Admin privileges changed
+    1. **send_message** - Send a new message
+    2. **edit_message** - Edit existing message
+    3. **delete_message** - Delete a message
+    4. **typing_start** - Indicate user is typing
+    5. **typing_stop** - Indicate user stopped typing
+    6. **mark_read** - Mark messages as read
     
-    **Connection Lifecycle:**
-    - Authenticate on connect
-    - Register connection with connection manager
-    - Handle incoming typing events
-    - Clean up on disconnect
+    **Outgoing Message Types:**
+    - new_message, message_edited, message_deleted
+    - user_typing, user_stopped_typing
+    - messages_read, participants_added, participant_removed
+    - admin_status_changed, error
     """
+    
+    # ============================================
+    # AUTHENTICATION
+    # ============================================
     try:
         payload = decode_token(token)
         user_id = uuid.UUID(payload.get("user_id"))
@@ -568,20 +568,240 @@ async def websocket_endpoint(
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
+    # ============================================
+    # CONNECTION ESTABLISHED
+    # ============================================
     await manager.connect(websocket, user_id)
+    service = MessageService(db)
+    
+    # Send connection confirmation
+    await websocket.send_json({
+        "type": "connected",
+        "data": {
+            "user_id": str(user_id),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    })
+    
     try:
         while True:
+            # Receive message from client
             data = await websocket.receive_json()
-            # Handle Typing events (Too frequent for REST)
-            if data.get("type") == "typing":
-                service = MessageService(db)
-                p_ids = await service.get_all_participants(uuid.UUID(data["conversation_id"]))
-                await manager.broadcast_to_conversation({
-                    "type": "user_typing", 
+            message_type = data.get("type")
+            payload = data.get("data", {})
+            
+            try:
+                # ============================================
+                # HANDLE SEND MESSAGE
+                # ============================================
+                if message_type == "send_message":
+                    conversation_id = uuid.UUID(payload["conversation_id"])
+                    content = payload["content"]
+                    message_type_value = payload.get("message_type", "text")
+                    media_url = payload.get("media_url")
+                    reply_to_message_id = payload.get("reply_to_message_id")
+                    
+                    if reply_to_message_id:
+                        reply_to_message_id = uuid.UUID(reply_to_message_id)
+                    
+                    # Create message
+                    msg = await service.send_message(
+                        conversation_id=conversation_id,
+                        sender_id=user_id,
+                        content=content,
+                        message_type=message_type_value,
+                        media_url=media_url,
+                        reply_to_message_id=reply_to_message_id
+                    )
+                    
+                    # Broadcast to all participants
+                    participant_ids = await service.get_all_participants(conversation_id)
+                    msg_response = MessageResponse.model_validate(msg).model_dump(mode='json')
+                    
+                    await manager.broadcast_to_conversation(
+                        {
+                            "type": "new_message",
+                            "data": msg_response
+                        },
+                        participant_ids
+                    )
+                    
+                    # Send confirmation to sender
+                    await websocket.send_json({
+                        "type": "message_sent",
+                        "data": msg_response
+                    })
+                
+                # ============================================
+                # HANDLE EDIT MESSAGE
+                # ============================================
+                elif message_type == "edit_message":
+                    message_id = uuid.UUID(payload["message_id"])
+                    new_content = payload["content"]
+                    
+                    msg = await service.edit_message(message_id, user_id, new_content)
+                    
+                    # Broadcast to all participants
+                    participant_ids = await service.get_all_participants(msg.conversation_id)
+                    msg_response = MessageResponse.model_validate(msg).model_dump(mode='json')
+                    
+                    await manager.broadcast_to_conversation(
+                        {
+                            "type": "message_edited",
+                            "data": msg_response
+                        },
+                        participant_ids
+                    )
+                
+                # ============================================
+                # HANDLE DELETE MESSAGE
+                # ============================================
+                elif message_type == "delete_message":
+                    message_id = uuid.UUID(payload["message_id"])
+                    
+                    msg = await service.delete_message(message_id, user_id)
+                    
+                    # Broadcast to all participants
+                    participant_ids = await service.get_all_participants(msg.conversation_id)
+                    
+                    await manager.broadcast_to_conversation(
+                        {
+                            "type": "message_deleted",
+                            "data": {
+                                "message_id": str(message_id),
+                                "conversation_id": str(msg.conversation_id)
+                            }
+                        },
+                        participant_ids
+                    )
+                
+                # ============================================
+                # HANDLE TYPING INDICATORS
+                # ============================================
+                elif message_type in ["typing_start", "typing", "typing_stop"]:
+                    conversation_id = uuid.UUID(payload["conversation_id"])
+                    
+                    # Determine if user is typing or stopped
+                    is_typing = message_type in ["typing_start", "typing"]
+                    
+                    participant_ids = await service.get_all_participants(conversation_id)
+                    
+                    # Don't send typing indicator back to sender
+                    other_participants = [pid for pid in participant_ids if pid != user_id]
+                    
+                    await manager.broadcast_to_conversation(
+                        {
+                            "type": "user_typing" if is_typing else "user_stopped_typing",
+                            "data": {
+                                "user_id": str(user_id),
+                                "conversation_id": str(conversation_id),
+                                "timestamp": datetime.utcnow().isoformat()
+                            }
+                        },
+                        other_participants
+                    )
+                
+                # ============================================
+                # HANDLE READ RECEIPTS
+                # ============================================
+                elif message_type == "mark_read":
+                    conversation_id = uuid.UUID(payload["conversation_id"])
+                    last_message_id = uuid.UUID(payload["last_message_id"])
+                    
+                    success = await service.mark_messages_as_read(
+                        conversation_id=conversation_id,
+                        user_id=user_id,
+                        last_read_message_id=last_message_id
+                    )
+                    
+                    if success:
+                        # Broadcast read receipt to other participants
+                        participant_ids = await service.get_all_participants(conversation_id)
+                        other_participants = [pid for pid in participant_ids if pid != user_id]
+                        
+                        await manager.broadcast_to_conversation(
+                            {
+                                "type": "messages_read",
+                                "data": {
+                                    "user_id": str(user_id),
+                                    "conversation_id": str(conversation_id),
+                                    "last_message_id": str(last_message_id),
+                                    "timestamp": datetime.utcnow().isoformat()
+                                }
+                            },
+                            other_participants
+                        )
+                        
+                        # Confirm to sender
+                        await websocket.send_json({
+                            "type": "read_confirmed",
+                            "data": {
+                                "conversation_id": str(conversation_id),
+                                "last_message_id": str(last_message_id)
+                            }
+                        })
+                
+                # ============================================
+                # HANDLE UNKNOWN MESSAGE TYPE
+                # ============================================
+                else:
+                    await websocket.send_json({
+                        "type": "error",
+                        "data": {
+                            "error": f"Unknown message type: {message_type}",
+                            "original_type": message_type,
+                            "timestamp": datetime.utcnow().isoformat()
+                        }
+                    })
+            
+            except ValueError as e:
+                # Business logic error (unauthorized, not found, etc.)
+                await websocket.send_json({
+                    "type": "error",
                     "data": {
-                        "user_id": str(user_id), 
-                        "conversation_id": data["conversation_id"]
+                        "error": str(e),
+                        "original_type": message_type,
+                        "timestamp": datetime.utcnow().isoformat()
                     }
-                }, p_ids)
+                })
+            
+            except KeyError as e:
+                # Missing required field
+                await websocket.send_json({
+                    "type": "error",
+                    "data": {
+                        "error": f"Missing required field: {str(e)}",
+                        "original_type": message_type,
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                })
+            
+            except Exception as e:
+                # Unexpected error
+                await websocket.send_json({
+                    "type": "error",
+                    "data": {
+                        "error": f"Internal error: {str(e)}",
+                        "original_type": message_type,
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                })
+    
     except WebSocketDisconnect:
+        # Clean disconnect
         manager.disconnect(websocket, user_id)
+    
+    except Exception as e:
+        # Unexpected error during connection
+        try:
+            await websocket.send_json({
+                "type": "error",
+                "data": {
+                    "error": f"Connection error: {str(e)}",
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+            })
+        except:
+            pass
+        finally:
+            manager.disconnect(websocket, user_id)
