@@ -316,19 +316,14 @@ class ConversationParticipantInfo(BaseModel):
     Participant information for conversation display.
     
     Attributes:
-        id: User UUID
-        username: User's unique username
-        full_name: User's full name (if set)
-        profile_picture_url: URL to user's profile picture
-        is_verified: Whether user account is verified
+        user: The nested user information (id, username, etc)
         is_admin: Whether user is a group admin (only for groups)
+        joined_at: Timestamp when user joined
     """
-    id: uuid.UUID
-    username: str
-    full_name: Optional[str] = None
-    profile_picture_url: Optional[str] = None
-    is_verified: bool = False
-    is_admin: Optional[bool] = None  # Only relevant for group chats
+    # FIX: Map to SQLAlchemy 'user' relationship to solve validation error
+    user: MessageSender 
+    is_admin: bool = False
+    joined_at: datetime
     
     model_config = ConfigDict(from_attributes=True)
 
@@ -361,9 +356,8 @@ class ConversationResponse(BaseModel):
     unread_count: int = 0
     admin_only_add_members: bool = False
     
-    # For 1-on-1: the other participant
+    # Nested Info
     other_participant: Optional[ConversationParticipantInfo] = None
-    # For groups: all participants
     participants: List[ConversationParticipantInfo] = []
     
     model_config = ConfigDict(
@@ -377,34 +371,7 @@ class ConversationResponse(BaseModel):
                     "last_message_at": "2024-12-15T10:00:00Z",
                     "created_at": "2024-12-15T09:00:00Z",
                     "unread_count": 3,
-                    "admin_only_add_members": False,
-                    "other_participant": {
-                        "id": "660e8400-e29b-41d4-a716-446655440001",
-                        "username": "john_doe",
-                        "is_verified": True
-                    }
-                },
-                {
-                    "id": "550e8400-e29b-41d4-a716-446655440001",
-                    "is_group": True,
-                    "name": "Project Team",
-                    "last_message": "Great work everyone!",
-                    "last_message_at": "2024-12-15T14:30:00Z",
-                    "created_at": "2024-12-01T09:00:00Z",
-                    "unread_count": 5,
-                    "admin_only_add_members": True,
-                    "participants": [
-                        {
-                            "id": "660e8400-e29b-41d4-a716-446655440001",
-                            "username": "john_doe",
-                            "is_admin": True
-                        },
-                        {
-                            "id": "660e8400-e29b-41d4-a716-446655440002",
-                            "username": "jane_smith",
-                            "is_admin": False
-                        }
-                    ]
+                    "admin_only_add_members": False
                 }
             ]
         }
@@ -481,11 +448,7 @@ class WebSocketMessage(BaseModel):
                     "data": {
                         "id": "123e4567-e89b-12d3-a456-426614174000",
                         "conversation_id": "550e8400-e29b-41d4-a716-446655440000",
-                        "content": "Hello!",
-                        "sender": {
-                            "id": "660e8400-e29b-41d4-a716-446655440001",
-                            "username": "john_doe"
-                        }
+                        "content": "Hello!"
                     }
                 }
             ]
