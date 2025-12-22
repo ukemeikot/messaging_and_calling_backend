@@ -16,9 +16,10 @@ Endpoints:
 """
 
 import os
+import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request, BackgroundTasks
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from authlib.integrations.starlette_client import OAuthError
@@ -57,6 +58,9 @@ from app.schemas.user import (
     PasswordResetConfirm
 )
 
+# Setup logging
+logger = logging.getLogger(__name__)
+
 # -------------------------------------------------------------------
 # Router
 # -------------------------------------------------------------------
@@ -67,6 +71,57 @@ router = APIRouter(
 )
 
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15"))
+
+# -------------------------------------------------------------------
+# Background Task for Email Sending
+# -------------------------------------------------------------------
+
+async def send_verification_email_task(
+    email: str,
+    username: str,
+    user_id: uuid.UUID
+):
+    """
+    Background task to send verification email.
+    Handles errors gracefully without breaking the main flow.
+    """
+    try:
+        email_service = EmailService()
+        token = create_verification_token(user_id, email)
+        await email_service.send_verification_email(
+            to_email=email,
+            username=username,
+            verification_token=token
+        )
+        logger.info(f"Verification email sent successfully to {email}")
+    except Exception as e:
+        logger.error(f"Failed to send verification email to {email}: {str(e)}")
+        # In production, you might want to:
+        # 1. Queue this for retry
+        # 2. Send to a dead letter queue
+        # 3. Alert monitoring system
+
+
+async def send_password_reset_email_task(
+    email: str,
+    username: str,
+    user_id: uuid.UUID
+):
+    """
+    Background task to send password reset email.
+    Handles errors gracefully without breaking the main flow.
+    """
+    try:
+        email_service = EmailService()
+        token = create_password_reset_token(user_id, email)
+        await email_service.send_password_reset_email(
+            to_email=email,
+            username=username,
+            reset_token=token
+        )
+        logger.info(f"Password reset email sent successfully to {email}")
+    except Exception as e:
+        logger.error(f" Failed to send password reset email to {email}: {str(e)}")
 
 # -------------------------------------------------------------------
 # AUTH: REGISTER
@@ -94,10 +149,10 @@ ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15")
 )
 async def register(
     user_data: UserRegister,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ):
     user_service = UserService(db)
-    email_service = EmailService()
 
     # Check for existing username/email
     exists = await user_service.user_exists(
@@ -133,8 +188,9 @@ async def register(
             password=user_data.password,
             full_name=user_data.full_name,
         )
+        logger.info(f"User created: {user.username} ({user.email})")
     except Exception as e:
-        print(f"Error creating user: {e}")
+        logger.error(f" Error creating user: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={
@@ -143,19 +199,14 @@ async def register(
             },
         )
 
-    # Generate verification token
-    verification_token = create_verification_token(user.id, user.email)
-    
-    # Send verification email (async, don't block registration)
-    try:
-        await email_service.send_verification_email(
-            to_email=user.email,
-            username=user.username,
-            verification_token=verification_token
-        )
-    except Exception as e:
-        print(f"Error sending verification email: {e}")
-        # Don't fail registration if email fails
+    # Schedule verification email in background (non-blocking)
+    background_tasks.add_task(
+        send_verification_email_task,
+        email=user.email,
+        username=user.username,
+        user_id=user.id
+    )
+    logger.info(f"📧 Verification email queued for {user.email}")
 
     # Generate JWT tokens
     token_data = {"user_id": str(user.id), "username": user.username}
@@ -251,6 +302,8 @@ async def login(
         expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     )
 
+    logger.info(f" User logged in: {user.username}")
+
     return LoginResponse(
         message="Login successful",
         user=UserResponse.model_validate(user),
@@ -303,6 +356,7 @@ async def get_me(current_user: User = Depends(get_current_user)):
 )
 async def resend_verification_email(
     request_data: EmailVerificationRequest,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -310,6 +364,7 @@ async def resend_verification_email(
     
     Args:
         request_data: Contains email address
+        background_tasks: FastAPI background tasks
         db: Database session
         
     Returns:
@@ -317,39 +372,25 @@ async def resend_verification_email(
     """
     
     user_service = UserService(db)
-    email_service = EmailService()
     
     # Find user by email
     user = await user_service.get_user_by_email(request_data.email)
     
-    # Always return success (security: don't reveal if email exists)
-    if not user:
-        return {
-            "message": "If an account exists with this email, a verification link has been sent",
-            "note": "Please check your email and spam folder"
-        }
-    
-    # Check if already verified
-    if user.is_verified:
-        return {
-            "message": "Email already verified",
-            "note": "You can log in and use all features"
-        }
-    
-    # Generate verification token
-    verification_token = create_verification_token(user.id, user.email)
-    
-    # Send verification email
-    try:
-        await email_service.send_verification_email(
-            to_email=user.email,
+    # If user exists and not verified, send email
+    if user and not user.is_verified:
+        background_tasks.add_task(
+            send_verification_email_task,
+            email=user.email,
             username=user.username,
-            verification_token=verification_token
+            user_id=user.id
         )
-    except Exception as e:
-        print(f"Error sending verification email: {e}")
-        # Don't fail the request if email fails
+        logger.info(f"Verification email re-queued for {user.email}")
+    elif user and user.is_verified:
+        logger.info(f"ℹUser {user.email} already verified, skipping email")
+    else:
+        logger.info(f"ℹEmail {request_data.email} not found, skipping email (security)")
     
+    # Always return success (security: don't reveal if email exists)
     return {
         "message": "Verification email sent",
         "note": "Please check your email and spam folder. Link expires in 24 hours."
@@ -399,7 +440,9 @@ async def verify_email(
     # Verify token
     try:
         token_data = verify_verification_token(token)
-    except JWTError:
+        logger.info(f"Token verified for user_id: {token_data.get('user_id')}")
+    except JWTError as e:
+        logger.warning(f"Invalid verification token: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
@@ -426,6 +469,7 @@ async def verify_email(
     user = await user_service.get_user_by_id(user_id)
     
     if not user:
+        logger.warning(f"User not found for id: {user_id}")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={
@@ -436,6 +480,7 @@ async def verify_email(
     
     # Check if already verified
     if user.is_verified:
+        logger.info(f"ℹ️ User {user.email} already verified")
         return {
             "message": "Email already verified",
             "note": "You can log in and use all features",
@@ -444,6 +489,7 @@ async def verify_email(
     
     # Verify the email matches (security check)
     if user.email != token_data["email"]:
+        logger.warning(f"Email mismatch for user {user.id}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
@@ -457,9 +503,11 @@ async def verify_email(
     await db.commit()
     await db.refresh(user)
     
+    logger.info(f"Email verified successfully for {user.email}")
+    
     # Return success with redirect URL
     return {
-        "message": "✅ Email verified successfully!",
+        "message": "Email verified successfully!",
         "note": "You can now access all features",
         "redirect_url": f"{os.getenv('FRONTEND_URL', 'http://localhost:3000')}/login?verified=true",
         "features_unlocked": [
@@ -496,6 +544,7 @@ async def verify_email(
 )
 async def forgot_password(
     request_data: PasswordResetRequest,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -503,6 +552,7 @@ async def forgot_password(
     
     Args:
         request_data: Contains email address
+        background_tasks: FastAPI background tasks
         db: Database session
         
     Returns:
@@ -510,32 +560,23 @@ async def forgot_password(
     """
     
     user_service = UserService(db)
-    email_service = EmailService()
     
     # Find user by email
     user = await user_service.get_user_by_email(request_data.email)
     
-    # Always return success (security: don't reveal if email exists)
-    if not user:
-        return {
-            "message": "If an account exists with this email, a password reset link has been sent",
-            "note": "Please check your email and spam folder"
-        }
-    
-    # Generate reset token
-    reset_token = create_password_reset_token(user.id, user.email)
-    
-    # Send password reset email
-    try:
-        await email_service.send_password_reset_email(
-            to_email=user.email,
+    # If user exists, send reset email
+    if user:
+        background_tasks.add_task(
+            send_password_reset_email_task,
+            email=user.email,
             username=user.username,
-            reset_token=reset_token
+            user_id=user.id
         )
-    except Exception as e:
-        print(f"Error sending password reset email: {e}")
-        # Don't fail the request if email fails
+        logger.info(f" Password reset email queued for {user.email}")
+    else:
+        logger.info(f"ℹ Email {request_data.email} not found, skipping email (security)")
     
+    # Always return success (security: don't reveal if email exists)
     return {
         "message": "Password reset email sent",
         "note": "Please check your email. Link expires in 1 hour.",
@@ -584,7 +625,9 @@ async def reset_password(
     # Verify token
     try:
         token_data = verify_password_reset_token(reset_data.token)
-    except JWTError:
+        logger.info(f"Reset token verified for user_id: {token_data.get('user_id')}")
+    except JWTError as e:
+        logger.warning(f"Invalid reset token: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
@@ -611,6 +654,7 @@ async def reset_password(
     user = await user_service.get_user_by_id(user_id)
     
     if not user:
+        logger.warning(f" User not found for id: {user_id}")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={
@@ -621,6 +665,7 @@ async def reset_password(
     
     # Verify email matches (security check)
     if user.email != token_data["email"]:
+        logger.warning(f" Email mismatch for user {user.id}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
@@ -633,6 +678,8 @@ async def reset_password(
     user.hashed_password = hash_password(reset_data.new_password)
     await db.commit()
     await db.refresh(user)
+    
+    logger.info(f"✅ Password reset successfully for {user.email}")
     
     return {
         "message": "✅ Password reset successfully!",
@@ -715,6 +762,7 @@ async def google_callback(
     try:
         token = await client.authorize_access_token(request)
     except OAuthError as e:
+        logger.error(f"Google OAuth error: {str(e)}")
         if "mobile=true" in request.query_params.get("state", ""):
             scheme = os.getenv("MOBILE_APP_SCHEME", "enterprisemessaging")
             return RedirectResponse(
@@ -733,6 +781,8 @@ async def google_callback(
 
     access_token = create_access_token(token_data)
     refresh_token = create_refresh_token(token_data)
+
+    logger.info(f"Google OAuth successful for {user.email} (new_user={is_new_user})")
 
     # Check if mobile flow
     if "mobile=true" in request.query_params.get("state", ""):
@@ -807,6 +857,7 @@ async def google_token_exchange(
             os.getenv("GOOGLE_CLIENT_ID"),
         )
     except ValueError as e:
+        logger.warning(f" Invalid Google token: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={
@@ -828,6 +879,8 @@ async def google_token_exchange(
     user, is_new_user = await oauth_service.authenticate_with_google(user_info)
 
     token_data = {"user_id": str(user.id), "username": user.username}
+
+    logger.info(f" Google token exchange successful for {user.email} (new_user={is_new_user})")
 
     return OAuthCallbackResponse(
         message="Authentication successful"

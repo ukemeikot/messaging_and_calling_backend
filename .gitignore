@@ -40,6 +40,6 @@ Thumbs.db
 # Logs
 *.log
 check_db.py
-*.py
+
 .env.example
 .env.production.example
