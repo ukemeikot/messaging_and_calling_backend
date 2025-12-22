@@ -244,3 +244,83 @@ class OAuthCallbackResponse(BaseModel):
             ]
         },
     }
+
+# ============================================
+# EMAIL VERIFICATION SCHEMAS
+# ============================================
+
+class EmailVerificationRequest(BaseModel):
+    """Schema for requesting email verification resend."""
+    email: EmailStr = Field(
+        ...,
+        description="Email address to send verification to"
+    )
+    
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "email": "ukeme@example.com"
+                }
+            ]
+        }
+    }
+
+class PasswordResetRequest(BaseModel):
+    """Schema for requesting password reset."""
+    email: EmailStr = Field(
+        ...,
+        description="Email address associated with account"
+    )
+    
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "email": "ukeme@example.com"
+                }
+            ]
+        }
+    }
+
+class PasswordResetConfirm(BaseModel):
+    """Schema for confirming password reset."""
+    token: str = Field(
+        ...,
+        description="Password reset token from email"
+    )
+    new_password: str = Field(
+        ...,
+        min_length=8,
+        max_length=100,
+        description="New password"
+    )
+    
+    @field_validator('new_password')
+    @classmethod
+    def validate_new_password(cls, v: str) -> str:
+        """Validate new password strength."""
+        if len(v) < 8:
+            raise ValueError('Password must be at least 8 characters long')
+        
+        if not re.search(r'[A-Z]', v):
+            raise ValueError('Password must contain at least one uppercase letter')
+        
+        if not re.search(r'[a-z]', v):
+            raise ValueError('Password must contain at least one lowercase letter')
+        
+        if not re.search(r'\d', v):
+            raise ValueError('Password must contain at least one number')
+        
+        return v
+    
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+                    "new_password": "NewSecurePass123!"
+                }
+            ]
+        }
+    }
