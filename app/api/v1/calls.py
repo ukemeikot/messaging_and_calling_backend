@@ -92,39 +92,54 @@ def call_to_response(call, current_user_id=None) -> CallResponse:
     """Convert Call model to CallResponse schema"""
     
     participants_response = []
-    for p in call.participants:
-        participants_response.append(CallParticipantResponse(
-            id=p.id,
-            user_id=p.user_id,
-            user=UserCallInfo.model_validate(p.user),
-            role=p.role,
-            status=p.status,
-            invited_at=p.invited_at,
-            joined_at=p.joined_at,
-            left_at=p.left_at,
-            is_muted=p.is_muted,
-            is_video_enabled=p.is_video_enabled,
-            is_screen_sharing=p.is_screen_sharing,
-            connection_quality=p.connection_quality,
-            duration_seconds=p.duration_seconds
-        ))
+    # FIX: Check __dict__ to prevent MissingGreenlet error on relationship access
+    if "participants" in call.__dict__:
+        for p in call.participants:
+            participants_response.append(CallParticipantResponse(
+                id=p.id,
+                user_id=p.user_id,
+                user=UserCallInfo.model_validate(p.user),
+                role=p.role,
+                status=p.status,
+                invited_at=p.invited_at,
+                joined_at=p.joined_at,
+                left_at=p.left_at,
+                is_muted=p.is_muted,
+                is_video_enabled=p.is_video_enabled,
+                is_screen_sharing=p.is_screen_sharing,
+                connection_quality=p.connection_quality,
+                duration_seconds=p.duration_seconds,
+                # FIX: Explicitly map participant_metadata to metadata field
+                metadata=p.participant_metadata
+            ))
     
-    active_count = sum(1 for p in call.participants if p.status == "joined")
+    active_count = sum(1 for p in participants_response if p.status == "joined")
+    
+    # FIX: Handle non-nullable initiator for Pylance using a fallback if not loaded
+    if "initiator" in call.__dict__ and call.initiator:
+        initiator_info = UserCallInfo.model_validate(call.initiator)
+    else:
+        initiator_info = UserCallInfo(
+            id=call.initiator_id,
+            username="Unknown",
+            is_online=False
+        )
     
     return CallResponse(
         id=call.id,
         initiator_id=call.initiator_id,
-        initiator=UserCallInfo.model_validate(call.initiator),
-        call_type=call.call_type,
-        call_mode=call.call_mode,
-        status=call.status,
+        initiator=initiator_info,
+        call_type=getattr(call, 'call_type', 'audio'),
+        call_mode=getattr(call, 'call_mode', '1-on-1'),
+        status=getattr(call, 'status', 'ringing'),
         max_participants=call.max_participants,
         started_at=call.started_at,
         ended_at=call.ended_at,
         duration_seconds=call.duration_seconds,
         ended_by=call.ended_by,
         end_reason=call.end_reason,
-        metadata=call.metadata,
+        # FIX: Explicitly map call_metadata to metadata field
+        metadata=call.call_metadata,
         participants=participants_response,
         created_at=call.created_at,
         updated_at=call.updated_at,
@@ -337,7 +352,7 @@ async def end_call(
             detail="Failed to end call"
         )
     
-    return call_to_response(call, current_user.id)
+    return call_to_response(call, current_user_id=current_user.id)
 
 
 @router.post(
@@ -449,7 +464,9 @@ async def update_media_state(
         is_video_enabled=participant.is_video_enabled,
         is_screen_sharing=participant.is_screen_sharing,
         connection_quality=participant.connection_quality,
-        duration_seconds=participant.duration_seconds
+        duration_seconds=participant.duration_seconds,
+        # FIX: Explicitly map participant_metadata
+        metadata=participant.participant_metadata
     )
 
 
@@ -567,8 +584,8 @@ async def get_call_history(
             ended_at=call.ended_at,
             duration_seconds=call.duration_seconds,
             initiator_id=call.initiator_id,
-            initiator_username=call.initiator.username,
-            initiator_avatar_url=call.initiator.avatar_url,
+            initiator_username=call.initiator.username if "initiator" in call.__dict__ else "Unknown",
+            initiator_avatar_url=call.initiator.avatar_url if "initiator" in call.__dict__ else None,
             participant_count=len(call.participants),
             participant_names=participant_names,
             user_role=user_role

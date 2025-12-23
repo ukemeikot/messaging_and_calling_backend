@@ -113,7 +113,7 @@ class UserCallInfo(BaseModel):
     username: str
     full_name: Optional[str] = None
     avatar_url: Optional[str] = None
-    is_online: bool
+    is_online: bool = False # Added default to satisfy fallback logic in router
     
     class Config:
         from_attributes = True
@@ -135,6 +135,7 @@ class CallParticipantResponse(BaseModel):
     is_screen_sharing: bool
     connection_quality: Optional[str] = None
     duration_seconds: Optional[int] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict) # Ensure metadata is present for explicit assignment
     
     class Config:
         from_attributes = True
