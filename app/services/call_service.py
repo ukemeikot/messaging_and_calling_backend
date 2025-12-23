@@ -81,8 +81,8 @@ class CallService:
             call_mode=call_mode,
             status="ringing",
             max_participants=max_participants if call_mode == "group" else None,
-            started_at=datetime.now(timezone.utc),
-            call_metadata=metadata if metadata is not None else {} # Fixed Attribute Name
+            # Database handles started_at via func.now()
+            call_metadata=metadata if metadata is not None else {}
         )
         
         self.db.add(call)
@@ -93,11 +93,10 @@ class CallService:
             user_id=initiator_id,
             role="initiator",
             status="joined",
-            invited_at=datetime.now(timezone.utc),
-            joined_at=datetime.now(timezone.utc),
+            # Database handles invited_at/joined_at via func.now()
             is_muted=False,
             is_video_enabled=(call_type == "video"),
-            participant_metadata={} # Fixed Attribute Name
+            participant_metadata={}
         )
         self.db.add(initiator_participant)
         
@@ -107,10 +106,10 @@ class CallService:
                 user_id=participant_id,
                 role="participant",
                 status="ringing",
-                invited_at=datetime.now(timezone.utc),
+                # Database handles invited_at via func.now()
                 is_muted=False,
                 is_video_enabled=(call_type == "video"),
-                participant_metadata={} # Fixed Attribute Name
+                participant_metadata={}
             )
             self.db.add(participant)
         
@@ -150,10 +149,11 @@ class CallService:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot answer now")
         
         participant.status = "joined"
-        participant.joined_at = datetime.now(timezone.utc)
+        # Use .replace(tzinfo=None) to match naive timestamp in DB
+        participant.joined_at = datetime.now(timezone.utc).replace(tzinfo=None)
         
         if metadata is not None:
-            if participant.participant_metadata is None: # Fixed Attribute Name
+            if participant.participant_metadata is None:
                 participant.participant_metadata = {}
             participant.participant_metadata.update(metadata)
         
@@ -174,16 +174,18 @@ class CallService:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot decline")
         
         participant.status = "declined"
+        naive_now = datetime.now(timezone.utc).replace(tzinfo=None)
+        
         if call.call_mode == "1-on-1":
             call.status = "declined"
-            call.ended_at = datetime.now(timezone.utc)
+            call.ended_at = naive_now
             call.ended_by = user_id
             call.end_reason = reason
         elif call.call_mode == "group":
             all_declined = all(p.status in ["declined", "missed"] for p in call.participants if p.role == "participant")
             if all_declined:
                 call.status = "declined"
-                call.ended_at = datetime.now(timezone.utc)
+                call.ended_at = naive_now
                 call.end_reason = "all_declined"
         
         await self.db.commit()
@@ -199,24 +201,26 @@ class CallService:
         if not participant:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a participant")
         
+        naive_now = datetime.now(timezone.utc).replace(tzinfo=None)
+        
         if participant.status == "joined":
             participant.status = "left"
-            participant.left_at = datetime.now(timezone.utc)
+            participant.left_at = naive_now
         
         if call.call_mode == "1-on-1":
             call.status = "ended"
-            call.ended_at = datetime.now(timezone.utc)
+            call.ended_at = naive_now
             call.ended_by = user_id
             call.end_reason = reason
             for p in call.participants:
                 if p.user_id != user_id and p.status == "joined":
                     p.status = "left"
-                    p.left_at = datetime.now(timezone.utc)
+                    p.left_at = naive_now
         elif call.call_mode == "group":
             active_participants = [p for p in call.participants if p.status == "joined" and p.user_id != user_id]
             if not active_participants:
                 call.status = "ended"
-                call.ended_at = datetime.now(timezone.utc)
+                call.ended_at = naive_now
                 call.ended_by = user_id
                 call.end_reason = "all_left"
         
@@ -246,6 +250,8 @@ class CallService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Some users not found")
         
         new_participants = []
+        naive_now = datetime.now(timezone.utc).replace(tzinfo=None)
+        
         for user_id in user_ids:
             if any(p.user_id == user_id for p in call.participants):
                 continue
@@ -255,10 +261,10 @@ class CallService:
                 user_id=user_id,
                 role="participant",
                 status="ringing",
-                invited_at=datetime.now(timezone.utc),
+                # invited_at handled by server_default
                 is_muted=False,
                 is_video_enabled=(call.call_type == "video"),
-                participant_metadata={} # Fixed Attribute Name
+                participant_metadata={}
             )
             self.db.add(participant)
             new_participants.append(participant)
@@ -268,8 +274,8 @@ class CallService:
                 invited_user_id=user_id,
                 invited_by=inviter_id,
                 status="pending",
-                invited_at=datetime.now(timezone.utc),
-                expires_at=datetime.now(timezone.utc) + timedelta(minutes=2)
+                # expires_at needs manual calculation, make it naive
+                expires_at=(datetime.now(timezone.utc) + timedelta(minutes=2)).replace(tzinfo=None)
             )
             self.db.add(invitation)
         
