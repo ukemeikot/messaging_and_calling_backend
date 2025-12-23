@@ -40,18 +40,17 @@ class SearchService:
         offset: int = 0,
         online_only: bool = False,
         verified_only: bool = False,
-        sort_by: str = "relevance"
+        sort_by: str = "relevance",
+        **kwargs  # Safeguard against extra router params
     ) -> Tuple[List[UserSearchResult], int]:
         start_time = time.time()
         search_query = query.strip()
         
-        # 1. Handle empty queries immediately
         if not search_query:
             return [], 0
 
         ts_query = func.plainto_tsquery('english', search_query)
         
-        # 2. Score and Match Logic
         sim_username = func.similarity(User.username, search_query)
         sim_fullname = func.similarity(func.coalesce(User.full_name, ''), search_query)
         sim_email = func.similarity(User.email, search_query)
@@ -67,7 +66,6 @@ class SearchService:
             func.greatest(sim_username, sim_fullname, sim_email) * 0.4
         ).label('match_score')
         
-        # 3. Build Statement
         stmt = select(User, combined_score, matched_field_logic).where(
             User.id != self.current_user_id,
             User.is_active == True,
@@ -83,7 +81,6 @@ class SearchService:
         if verified_only:
             stmt = stmt.where(User.is_verified == True)
         
-        # 4. Sorting
         if sort_by == "relevance":
             stmt = stmt.order_by(desc('match_score'))
         elif sort_by == "username":
@@ -91,7 +88,6 @@ class SearchService:
         else:
             stmt = stmt.order_by(User.created_at.desc())
         
-        # 5. Execute
         count_stmt = select(func.count()).select_from(stmt.subquery())
         total = (await self.db.execute(count_stmt)).scalar() or 0
         
@@ -117,8 +113,6 @@ class SearchService:
                 matched_field=str(field_name)
             ))
         
-        search_time = (time.time() - start_time) * 1000
-        logger.info(f"User search for '{query}' took {search_time:.2f}ms")
         return results, int(total)
     
     # ============================================
@@ -131,7 +125,11 @@ class SearchService:
         limit: int = 20,
         offset: int = 0,
         conversation_id: Optional[uuid.UUID] = None,
-        sort_by: str = "relevance"
+        sender_id: Optional[uuid.UUID] = None,       # Added param
+        date_from: Optional[Any] = None,             # Added param
+        date_to: Optional[Any] = None,               # Added param
+        sort_by: str = "relevance",
+        **kwargs                                     # Safeguard
     ) -> Tuple[List[MessageSearchResult], int]:
         start_time = time.time()
         search_query = query.strip()
@@ -162,8 +160,15 @@ class SearchService:
             Message.is_deleted == False
         )
         
+        # Apply optional filters
         if conversation_id:
             stmt = stmt.where(Message.conversation_id == conversation_id)
+        if sender_id:
+            stmt = stmt.where(Message.sender_id == sender_id)
+        if date_from:
+            stmt = stmt.where(Message.created_at >= date_from)
+        if date_to:
+            stmt = stmt.where(Message.created_at <= date_to)
             
         stmt = stmt.order_by(desc('rank') if sort_by == "relevance" else desc(Message.created_at))
         
@@ -200,7 +205,8 @@ class SearchService:
         query: str,
         limit: int = 20,
         offset: int = 0,
-        only_joined: bool = True
+        only_joined: bool = True,
+        **kwargs # Safeguard
     ) -> Tuple[List[ConversationSearchResult], int]:
         start_time = time.time()
         search_query = query.strip()
@@ -253,13 +259,15 @@ class SearchService:
     async def global_search(
         self, 
         query: str, 
-        limit_per_type: int = 5
+        limit_per_type: int = 5,
+        **kwargs # Accept everything from GlobalSearchRequest
     ) -> Dict[str, Any]:
         start_time = time.time()
         
-        user_res, user_total = await self.search_users(query, limit=limit_per_type)
-        msg_res, msg_total = await self.search_messages(query, limit=limit_per_type)
-        conv_res, conv_total = await self.search_conversations(query, limit=limit_per_type)
+        # We pass **kwargs down so sub-methods can ignore what they don't need
+        user_res, user_total = await self.search_users(query, limit=limit_per_type, **kwargs)
+        msg_res, msg_total = await self.search_messages(query, limit=limit_per_type, **kwargs)
+        conv_res, conv_total = await self.search_conversations(query, limit=limit_per_type, **kwargs)
             
         search_time = (time.time() - start_time) * 1000
         return {
