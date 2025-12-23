@@ -14,22 +14,18 @@ from app.database import Base
 if TYPE_CHECKING:
     from app.models.user import User
 
-
 class Call(Base):
     """
     Call model - Represents a voice or video call (1-on-1 or group).
     """
-    
     __tablename__ = "calls"
     
-    # Primary Key
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         primary_key=True,
         server_default=text("gen_random_uuid()")
     )
     
-    # Initiator
     initiator_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE"),
@@ -42,7 +38,6 @@ class Call(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
     max_participants: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     
-    # Timestamps - Switched to DateTime(timezone=False) and func.now()
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=False),
         nullable=False,
@@ -61,7 +56,7 @@ class Call(Base):
     
     end_reason: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     
-    # Metadata
+    # Aliased metadata to avoid reserved keyword conflict
     call_metadata: Mapped[Dict[str, Any]] = mapped_column(
         "metadata", 
         JSONB,
@@ -98,7 +93,7 @@ class Call(Base):
     )
     
     def __repr__(self) -> str:
-        return f"<Call {self.id} - {self.call_type} - {self.call_mode} - {self.status}>"
+        return f"<Call {self.id} - {self.call_type} - {self.status}>"
     
     @property
     def is_active(self) -> bool:
@@ -109,6 +104,9 @@ class Call(Base):
         return self.call_mode == "group"
 
     def get_joined_participant_count(self) -> int:
+        # Prevents MissingGreenlet error by checking dict directly
+        if "participants" not in self.__dict__:
+            return 0
         return sum(1 for p in self.participants if p.status == "joined")
 
 
@@ -122,7 +120,6 @@ class CallParticipant(Base):
     role: Mapped[str] = mapped_column(String(20), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
     
-    # Timestamps
     invited_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
     joined_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True, index=True)
     left_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
@@ -146,6 +143,12 @@ class CallParticipant(Base):
         CheckConstraint("status IN ('ringing', 'joined', 'left', 'declined', 'missed')", name="call_participants_status_check"),
     )
 
+    @property
+    def duration_seconds(self) -> Optional[int]:
+        if not self.joined_at:
+            return None
+        end_time = self.left_at or datetime.utcnow()
+        return int((end_time - self.joined_at).total_seconds())
 
 class CallInvitation(Base):
     __tablename__ = "call_invitations"
