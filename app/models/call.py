@@ -147,18 +147,21 @@ class CallParticipant(Base):
 
     @property
     def duration_seconds(self) -> Optional[int]:
-        """Calculate call duration while ensuring naive datetime subtraction"""
-        if not self.joined_at:
+        """Safe calculation that avoids SQLAlchemy session/lazy-loading logic"""
+        # Pull directly from __dict__ to bypass SQLAlchemy attribute instrumentation
+        joined_at = self.__dict__.get('joined_at')
+        left_at = self.__dict__.get('left_at')
+
+        if not joined_at:
             return None
         
-        # Use left_at if they left, otherwise current time
-        end_time = self.left_at or datetime.utcnow()
-        start_time = self.joined_at
+        end_time = left_at or datetime.utcnow()
+        start_time = joined_at
 
-        # FORCE BOTH TO NAIVE: Strips timezone info if present to avoid TypeError
-        if start_time.tzinfo is not None:
+        # STRIP TIMEZONES: Ensure both are naive to prevent TypeError
+        if hasattr(start_time, 'tzinfo') and start_time.tzinfo is not None:
             start_time = start_time.replace(tzinfo=None)
-        if end_time.tzinfo is not None:
+        if hasattr(end_time, 'tzinfo') and end_time.tzinfo is not None:
             end_time = end_time.replace(tzinfo=None)
             
         return int((end_time - start_time).total_seconds())

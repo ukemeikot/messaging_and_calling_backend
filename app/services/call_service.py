@@ -1,5 +1,6 @@
 """
 Call service - Business logic for WebRTC calling system.
+Supports both 1-on-1 and group calls.
 """
 
 import logging
@@ -16,9 +17,18 @@ from fastapi import HTTPException, status
 
 logger = logging.getLogger(__name__)
 
+
 class CallService:
+    """
+    Call service for managing voice and video calls.
+    """
+    
     def __init__(self, db: AsyncSession):
         self.db = db
+    
+    # ============================================
+    # Call Initiation
+    # ============================================
     
     async def initiate_call(
         self,
@@ -29,18 +39,33 @@ class CallService:
         metadata: Optional[Dict[Any, Any]] = None
     ) -> Call:
         if initiator_id in participant_ids:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot call yourself")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot call yourself"
+            )
         
-        stmt = select(User).where(User.id.in_(participant_ids), User.is_active == True)
-        users = (await self.db.execute(stmt)).scalars().all()
+        stmt = select(User).where(
+            User.id.in_(participant_ids),
+            User.is_active == True
+        )
+        result = await self.db.execute(stmt)
+        users = result.scalars().all()
         
         if len(users) != len(participant_ids):
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="One or more participants not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="One or more participants not found"
+            )
         
-        for p_id in participant_ids:
-            active_call = await self._get_active_call_between_users(initiator_id, p_id)
+        for participant_id in participant_ids:
+            active_call = await self._get_active_call_between_users(
+                initiator_id, participant_id
+            )
             if active_call:
-                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"User {p_id} is in another call")
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"User {participant_id} is in another call"
+                )
         
         call_mode = "group" if len(participant_ids) > 1 else "1-on-1"
         
@@ -52,10 +77,10 @@ class CallService:
             max_participants=max_participants if call_mode == "group" else None,
             call_metadata=metadata if metadata is not None else {}
         )
+        
         self.db.add(call)
         await self.db.flush()
         
-        # Initiator joins automatically
         initiator_participant = CallParticipant(
             call_id=call.id,
             user_id=initiator_id,
@@ -68,10 +93,13 @@ class CallService:
         )
         self.db.add(initiator_participant)
         
-        for p_id in participant_ids:
+        for participant_id in participant_ids:
             participant = CallParticipant(
-                call_id=call.id, user_id=p_id, role="participant",
-                status="ringing", is_muted=False,
+                call_id=call.id,
+                user_id=participant_id,
+                role="participant",
+                status="ringing",
+                is_muted=False,
                 is_video_enabled=(call_type == "video"),
                 participant_metadata={}
             )
@@ -79,30 +107,52 @@ class CallService:
         
         await self.db.commit()
         
-        # Fresh fetch with loaded relationships to avoid MissingGreenlet
+        # Fresh fetch with loaded relationships to avoid MissingGreenlet in response
         return await self._get_call_with_participants(call.id)
     
-    async def answer_call(self, call_id: uuid.UUID, user_id: uuid.UUID, metadata: Optional[Dict[Any, Any]] = None) -> Call:
+    # ============================================
+    # Call Actions
+    # ============================================
+    
+    async def answer_call(
+        self,
+        call_id: uuid.UUID,
+        user_id: uuid.UUID,
+        metadata: Optional[Dict[Any, Any]] = None
+    ) -> Call:
         call = await self._get_call_with_participants(call_id)
+        
         if not call:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Call not found")
         
+        if call.status not in ["ringing", "active"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot join call with status: {call.status}"
+            )
+        
         participant = next((p for p in call.participants if p.user_id == user_id), None)
-        if not participant or participant.status != "ringing":
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot answer")
+        
+        if not participant:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a participant")
+        
+        if participant.status not in ["ringing"]:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot answer now")
         
         participant.status = "joined"
         participant.joined_at = datetime.utcnow()
-        if metadata:
+        
+        if metadata is not None:
             participant.participant_metadata.update(metadata)
         
         if call.status == "ringing":
             call.status = "active"
         
         await self.db.commit()
-        await self.db.refresh(call)
-        return call
-
+        
+        # Re-fetch to ensure objects are loaded in session for serializer
+        return await self._get_call_with_participants(call_id)
+    
     async def decline_call(self, call_id: uuid.UUID, user_id: uuid.UUID, reason: str = "declined") -> Call:
         call = await self._get_call_with_participants(call_id)
         if not call:
@@ -121,15 +171,19 @@ class CallService:
             call.ended_by = user_id
             call.end_reason = reason
         elif call.call_mode == "group":
-            all_declined = all(p.status in ["declined", "missed"] for p in call.participants if p.role == "participant")
+            all_declined = all(
+                p.status in ["declined", "missed"] 
+                for p in call.participants 
+                if p.role == "participant"
+            )
             if all_declined:
                 call.status = "declined"
                 call.ended_at = now
                 call.end_reason = "all_declined"
         
         await self.db.commit()
-        return call
-
+        return await self._get_call_with_participants(call_id)
+    
     async def end_call(self, call_id: uuid.UUID, user_id: uuid.UUID, reason: str = "user_hangup") -> Call:
         call = await self._get_call_with_participants(call_id)
         if not call:
@@ -154,7 +208,10 @@ class CallService:
                     p.status = "left"
                     p.left_at = now
         elif call.call_mode == "group":
-            active_participants = [p for p in call.participants if p.status == "joined" and p.user_id != user_id]
+            active_participants = [
+                p for p in call.participants 
+                if p.status == "joined" and p.user_id != user_id
+            ]
             if not active_participants:
                 call.status = "ended"
                 call.ended_at = now
@@ -162,8 +219,15 @@ class CallService:
                 call.end_reason = "all_left"
         
         await self.db.commit()
-        return call
-
+        
+        # CRITICAL: Re-fetch with participants loaded so the .duration_seconds 
+        # property doesn't trigger a lazy-load during JSON serialization
+        return await self._get_call_with_participants(call_id)
+    
+    # ============================================
+    # Group Call Management
+    # ============================================
+    
     async def invite_to_call(self, call_id: uuid.UUID, inviter_id: uuid.UUID, user_ids: List[uuid.UUID]) -> List[CallParticipant]:
         call = await self._get_call_with_participants(call_id)
         if not call or call.call_mode != "group" or call.status != "active":
@@ -194,8 +258,13 @@ class CallService:
         return new_participants
 
     async def update_media_state(self, call_id: uuid.UUID, user_id: uuid.UUID, **kwargs) -> CallParticipant:
-        stmt = select(CallParticipant).where(CallParticipant.call_id == call_id, CallParticipant.user_id == user_id)
-        participant = (await self.db.execute(stmt)).scalar_one_or_none()
+        stmt = select(CallParticipant).where(
+            CallParticipant.call_id == call_id, 
+            CallParticipant.user_id == user_id
+        )
+        result = await self.db.execute(stmt)
+        participant = result.scalar_one_or_none()
+        
         if not participant or participant.status != "joined":
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Participant not found")
         
@@ -220,34 +289,53 @@ class CallService:
             .options(selectinload(Call.participants).selectinload(CallParticipant.user), selectinload(Call.initiator))
             .order_by(desc(Call.started_at))
         )
-        count_stmt = select(func.count()).select_from(select(Call.id).join(CallParticipant).where(CallParticipant.user_id == user_id).subquery())
-        total = (await self.db.execute(count_stmt)).scalar() or 0
-        calls = (await self.db.execute(stmt.limit(limit).offset(offset))).scalars().all()
+        count_stmt = select(func.count()).select_from(
+            select(Call.id).join(CallParticipant).where(CallParticipant.user_id == user_id).subquery()
+        )
+        total_result = await self.db.execute(count_stmt)
+        total = total_result.scalar() or 0
+        
+        result = await self.db.execute(stmt.limit(limit).offset(offset))
+        calls = result.scalars().all()
         return list(calls), total
 
     async def get_active_calls(self, user_id: uuid.UUID) -> List[Call]:
         stmt = (
             select(Call)
             .join(CallParticipant)
-            .where(CallParticipant.user_id == user_id, CallParticipant.status == "joined", Call.status.in_(["ringing", "active"]))
+            .where(
+                CallParticipant.user_id == user_id, 
+                CallParticipant.status == "joined", 
+                Call.status.in_(["ringing", "active"])
+            )
             .options(selectinload(Call.participants).selectinload(CallParticipant.user), selectinload(Call.initiator))
         )
-        return list((await self.db.execute(stmt)).scalars().all())
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
 
     async def _get_call_with_participants(self, call_id: uuid.UUID) -> Optional[Call]:
         stmt = (
             select(Call)
             .where(Call.id == call_id)
-            .options(selectinload(Call.participants).selectinload(CallParticipant.user), selectinload(Call.initiator))
+            .options(
+                selectinload(Call.participants).selectinload(CallParticipant.user), 
+                selectinload(Call.initiator)
+            )
         )
-        return (await self.db.execute(stmt)).scalar_one_or_none()
+        result = await self.db.execute(stmt)
+        return result.scalar_one_or_none()
 
     async def _get_active_call_between_users(self, u1: uuid.UUID, u2: uuid.UUID) -> Optional[Call]:
         stmt = (
             select(Call)
             .join(CallParticipant)
-            .where(Call.status.in_(["ringing", "active"]), Call.call_mode == "1-on-1", CallParticipant.user_id.in_([u1, u2]))
+            .where(
+                Call.status.in_(["ringing", "active"]), 
+                Call.call_mode == "1-on-1", 
+                CallParticipant.user_id.in_([u1, u2])
+            )
             .group_by(Call.id)
             .having(func.count(CallParticipant.id) == 2)
         )
-        return (await self.db.execute(stmt)).scalar_one_or_none()
+        result = await self.db.execute(stmt)
+        return result.scalar_one_or_none()
