@@ -2,10 +2,11 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
-from app.api.v1 import auth, profile, contacts, chat, search
+from app.api.v1 import auth, profile, contacts, chat, search, calls
 import os
 from dotenv import load_dotenv
 from pathlib import Path
+from app.api.v1 import websocket_signaling
 
 load_dotenv()
 
@@ -48,6 +49,10 @@ app.include_router(profile.router, prefix="/api/v1")
 app.include_router(contacts.router, prefix="/api/v1")
 app.include_router(chat.router, prefix="/api/v1")
 app.include_router(search.router, prefix="/api/v1")
+app.include_router(calls.router, prefix="/api/v1") 
+
+# Register WebSocket router
+app.include_router(websocket_signaling.router, prefix="/api/v1")
 
 @app.get("/")
 async def root():
