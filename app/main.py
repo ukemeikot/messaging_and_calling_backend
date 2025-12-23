@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
-from app.api.v1 import auth, profile, contacts, chat  # Updated from 'chat' to 'messages'
+from app.api.v1 import auth, profile, contacts, chat, search
 import os
 from dotenv import load_dotenv
 from pathlib import Path
@@ -12,7 +12,7 @@ load_dotenv()
 app = FastAPI(
     title="Enterprise Messaging API",
     description="Production-ready messaging and calling API with OAuth",
-    version="1.0.0", # Updated version
+    version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -46,7 +46,8 @@ app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(profile.router, prefix="/api/v1")
 app.include_router(contacts.router, prefix="/api/v1")
-app.include_router(chat.router, prefix="/api/v1") # Points to /api/v1/messages
+app.include_router(chat.router, prefix="/api/v1")
+app.include_router(search.router, prefix="/api/v1")
 
 @app.get("/")
 async def root():
@@ -68,6 +69,13 @@ async def root():
                 "send_message": "POST /api/v1/messages",
                 "history": "GET /api/v1/messages/conversations/{id}/messages",
                 "websocket": "WS /api/v1/messages/ws?token={access_token}"
+            },
+            "search": {
+                "global": "GET /api/v1/search/global?q={query}",
+                "users": "GET /api/v1/search/users?q={query}",
+                "messages": "GET /api/v1/search/messages?q={query}",
+                "conversations": "GET /api/v1/search/conversations?q={query}",
+                "suggestions": "GET /api/v1/search/suggestions?q={query}"
             }
         }
     }

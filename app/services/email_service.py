@@ -1,7 +1,6 @@
 """
 Email service using Resend API.
 Better free tier alternative to SendGrid.
-
 Free Plan: 3,000 emails/month forever
 Setup: https://resend.com/
 """
@@ -31,7 +30,7 @@ class EmailService:
         self.frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
         
         if not self.api_key:
-            logger.warning("⚠️ RESEND_API_KEY not set - emails will fail!")
+            logger.warning(" RESEND_API_KEY not set - emails will fail!")
         else:
             resend.api_key = self.api_key
     
@@ -45,7 +44,7 @@ class EmailService:
         Send email verification link.
         """
         if not self.api_key:
-            logger.error("❌ Resend API key not set - check RESEND_API_KEY")
+            logger.error(" Resend API key not set - check RESEND_API_KEY")
             return False
         
         verification_url = f"{self.frontend_url}/verify-email?token={verification_token}"
@@ -70,7 +69,7 @@ class EmailService:
         <body>
             <div class="container">
                 <div class="header">
-                    <h1>✉️ Email Verification</h1>
+                    <h1> Email Verification</h1>
                 </div>
                 <div class="content">
                     <h2>Hi {username}! 👋</h2>
@@ -101,11 +100,11 @@ class EmailService:
             }
             
             resend.Emails.send(params)
-            logger.info(f"✅ Verification email sent to {to_email}")
+            logger.info(f"Verification email sent to {to_email}")
             return True
                 
         except Exception as e:
-            logger.error(f"❌ Failed to send verification email to {to_email}: {str(e)}")
+            logger.error(f"Failed to send verification email to {to_email}: {str(e)}")
             return False
     
     async def send_password_reset_email(
@@ -118,7 +117,7 @@ class EmailService:
         Send password reset link.
         """
         if not self.api_key:
-            logger.error("❌ Resend API key not set")
+            logger.error("Resend API key not set")
             return False
         
         reset_url = f"{self.frontend_url}/reset-password?token={reset_token}"
@@ -145,9 +144,9 @@ class EmailService:
             }
             
             resend.Emails.send(params)
-            logger.info(f"✅ Password reset email sent to {to_email}")
+            logger.info(f"Password reset email sent to {to_email}")
             return True
                 
         except Exception as e:
-            logger.error(f"❌ Failed to send password reset email to {to_email}: {str(e)}")
+            logger.error(f"Failed to send password reset email to {to_email}: {str(e)}")
             return False

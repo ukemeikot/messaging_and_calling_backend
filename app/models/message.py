@@ -1,10 +1,10 @@
 from sqlalchemy import String, Boolean, DateTime, ForeignKey, Text, Enum as SQLEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, TSVECTOR
 from app.database import Base
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Any  # FIXED: Added Any with capital A
 import uuid
 import enum
 
@@ -24,12 +24,11 @@ class Conversation(Base):
     name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     group_image_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     description: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
-    
-    # NEW: Group permission settings
-    # If True, only admins can add members. If False, any member can add.
     admin_only_add_members: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     
-    # Updated for better list-view performance
+    # FIXED: Changed any to Any
+    search_vector: Mapped[Optional[Any]] = mapped_column(TSVECTOR, nullable=True)
+    
     last_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     last_message_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     
@@ -46,7 +45,6 @@ class ConversationParticipant(Base):
     conversation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     
-    # Crucial for calculating unread counts
     last_read_message_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
     last_read_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     
@@ -54,7 +52,7 @@ class ConversationParticipant(Base):
     joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now(), server_default=func.now(), nullable=False)
 
     conversation: Mapped["Conversation"] = relationship("Conversation", back_populates="participants")
-    user = relationship("User") # Assuming User model is imported or available via string
+    user = relationship("User") 
 
 class Message(Base):
     __tablename__ = "messages"
@@ -67,14 +65,15 @@ class Message(Base):
     message_type: Mapped[MessageType] = mapped_column(SQLEnum(MessageType, name="message_type"), default=MessageType.TEXT, nullable=False)
     media_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     
+    # FIXED: Changed any to Any
+    search_vector: Mapped[Optional[Any]] = mapped_column(TSVECTOR, nullable=True)
+    
     is_edited: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     edited_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     reply_to_message_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("messages.id"), nullable=True)
-    
-    # We remove is_read here and rely on ConversationParticipant.last_read_message_id
     
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now(), server_default=func.now(), nullable=False)
 
