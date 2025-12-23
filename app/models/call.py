@@ -3,7 +3,7 @@ Call models for WebRTC calling system with group call support.
 """
 
 from datetime import datetime, timezone
-from typing import Optional, List, TYPE_CHECKING
+from typing import Optional, List, TYPE_CHECKING, Any, Dict
 from sqlalchemy import String, Integer, Boolean, ForeignKey, CheckConstraint, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID, JSONB
@@ -18,19 +18,6 @@ if TYPE_CHECKING:
 class Call(Base):
     """
     Call model - Represents a voice or video call (1-on-1 or group).
-    
-    Call Modes:
-    - 1-on-1: Direct call between two users
-    - group: Conference call with multiple participants
-    
-    Call States:
-    - ringing: Call initiated, waiting for participants to join
-    - active: Call in progress with at least one participant joined
-    - ended: Call completed
-    - missed: No one answered
-    - declined: All participants declined
-    - failed: Technical failure
-    - cancelled: Initiator cancelled before anyone joined
     """
     
     __tablename__ = "calls"
@@ -100,21 +87,16 @@ class Call(Base):
     end_reason: Mapped[Optional[str]] = mapped_column(
         String(50),
         nullable=True
-    )  # 'user_hangup', 'timeout', 'connection_error', 'all_left', etc.
+    )
     
-    # Metadata (JSONB for flexibility)
-    metadata: Mapped[dict] = mapped_column(
+    # Metadata - RENAMED to call_metadata to avoid SQLAlchemy reserved word error
+    call_metadata: Mapped[Dict[str, Any]] = mapped_column(
+        "metadata", # Actual DB column name
         JSONB,
         nullable=False,
         default=dict,
         server_default="{}"
     )
-    # Example metadata:
-    # {
-    #   "ice_servers": [...],
-    #   "recording_url": "...",
-    #   "quality_metrics": {...}
-    # }
     
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
@@ -178,20 +160,16 @@ class Call(Base):
     
     @property
     def is_active(self) -> bool:
-        """Check if call is currently active"""
         return self.status in ["ringing", "active"]
     
     @property
     def is_group_call(self) -> bool:
-        """Check if this is a group call"""
         return self.call_mode == "group"
     
     def get_joined_participant_count(self) -> int:
-        """Get count of participants who joined"""
         return sum(1 for p in self.participants if p.status == "joined")
     
     def can_add_participant(self) -> bool:
-        """Check if more participants can be added"""
         if not self.is_group_call:
             return False
         if self.max_participants is None:
@@ -202,7 +180,6 @@ class Call(Base):
 class CallParticipant(Base):
     """
     Call Participant model - Tracks user participation in calls.
-    For both 1-on-1 and group calls.
     """
     
     __tablename__ = "call_participants"
@@ -233,14 +210,14 @@ class CallParticipant(Base):
     role: Mapped[str] = mapped_column(
         String(20),
         nullable=False
-    )  # 'initiator' or 'participant'
+    )
     
     # Participant Status
     status: Mapped[str] = mapped_column(
         String(20),
         nullable=False,
         index=True
-    )  # 'ringing', 'joined', 'left', 'declined', 'missed'
+    )
     
     # Timestamps
     invited_at: Mapped[datetime] = mapped_column(
@@ -279,10 +256,11 @@ class CallParticipant(Base):
     connection_quality: Mapped[Optional[str]] = mapped_column(
         String(20),
         nullable=True
-    )  # 'excellent', 'good', 'fair', 'poor'
+    )
     
-    # Metadata
-    metadata: Mapped[dict] = mapped_column(
+    # Metadata - RENAMED to participant_metadata
+    participant_metadata: Mapped[Dict[str, Any]] = mapped_column(
+        "metadata", # Actual DB column name
         JSONB,
         nullable=False,
         default=dict,
@@ -330,12 +308,10 @@ class CallParticipant(Base):
     
     @property
     def is_active(self) -> bool:
-        """Check if participant is currently in call"""
         return self.status == "joined" and self.left_at is None
     
     @property
     def duration_seconds(self) -> Optional[int]:
-        """Calculate how long participant was in call"""
         if not self.joined_at:
             return None
         end_time = self.left_at or datetime.now(timezone.utc)
@@ -344,20 +320,17 @@ class CallParticipant(Base):
 
 class CallInvitation(Base):
     """
-    Call Invitation model - Tracks invitations sent during active group calls.
-    Allows adding participants to ongoing calls.
+    Call Invitation model
     """
     
     __tablename__ = "call_invitations"
     
-    # Primary Key
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         primary_key=True,
         server_default=text("gen_random_uuid()")
     )
     
-    # Foreign Keys
     call_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("calls.id", ondelete="CASCADE"),
@@ -378,14 +351,12 @@ class CallInvitation(Base):
         nullable=False
     )
     
-    # Status
     status: Mapped[str] = mapped_column(
         String(20),
         nullable=False,
         index=True
-    )  # 'pending', 'accepted', 'declined', 'expired'
+    )
     
-    # Timestamps
     invited_at: Mapped[datetime] = mapped_column(
         nullable=False,
         default=lambda: datetime.now(timezone.utc)
@@ -404,7 +375,6 @@ class CallInvitation(Base):
         default=lambda: datetime.now(timezone.utc)
     )
     
-    # Relationships
     call: Mapped["Call"] = relationship(
         "Call",
         back_populates="invitations"
@@ -422,7 +392,6 @@ class CallInvitation(Base):
         back_populates="call_invitations_sent"
     )
     
-    # Table Constraints
     __table_args__ = (
         UniqueConstraint('call_id', 'invited_user_id', name='uq_call_invitations_call_user'),
         CheckConstraint(
@@ -436,7 +405,6 @@ class CallInvitation(Base):
     
     @property
     def is_expired(self) -> bool:
-        """Check if invitation has expired"""
         if not self.expires_at:
             return False
         return datetime.now(timezone.utc) > self.expires_at
