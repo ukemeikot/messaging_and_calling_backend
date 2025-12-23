@@ -104,7 +104,6 @@ class Call(Base):
         return self.call_mode == "group"
 
     def get_joined_participant_count(self) -> int:
-        # Prevents MissingGreenlet error by checking dict directly
         if "participants" not in self.__dict__:
             return 0
         return sum(1 for p in self.participants if p.status == "joined")
@@ -143,12 +142,26 @@ class CallParticipant(Base):
         CheckConstraint("status IN ('ringing', 'joined', 'left', 'declined', 'missed')", name="call_participants_status_check"),
     )
 
+    def __repr__(self) -> str:
+        return f"<CallParticipant {self.user_id} in Call {self.call_id}>"
+
     @property
     def duration_seconds(self) -> Optional[int]:
+        """Calculate call duration while ensuring naive datetime subtraction"""
         if not self.joined_at:
             return None
+        
+        # Use left_at if they left, otherwise current time
         end_time = self.left_at or datetime.utcnow()
-        return int((end_time - self.joined_at).total_seconds())
+        start_time = self.joined_at
+
+        # FORCE BOTH TO NAIVE: Strips timezone info if present to avoid TypeError
+        if start_time.tzinfo is not None:
+            start_time = start_time.replace(tzinfo=None)
+        if end_time.tzinfo is not None:
+            end_time = end_time.replace(tzinfo=None)
+            
+        return int((end_time - start_time).total_seconds())
 
 class CallInvitation(Base):
     __tablename__ = "call_invitations"
