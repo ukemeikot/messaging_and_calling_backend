@@ -3,6 +3,9 @@
 This folder contains the static project website and documentation hub for the
 Messaging and Calling Backend SDK.
 
+The GitHub Pages published copy now lives in [`../docs/`](../docs/index.html).
+This folder is kept as the editable working copy and local source mirror.
+
 ## Purpose
 
 The site is intended to:
@@ -35,8 +38,8 @@ Then open `http://127.0.0.1:8080`.
 
 ## Production deployment
 
-This site is set up to deploy with GitHub Pages from `main` using
-[`.github/workflows/deploy-docs.yml`](../.github/workflows/deploy-docs.yml).
+GitHub Pages is now intended to publish from the committed
+[`../docs/`](../docs/index.html) folder on branch `main`.
 
 Intended production domain:
 

@@ -20,7 +20,7 @@ This repository uses GitHub Actions to:
 - Customizable email composition with templates, theme values, hooks, and scaffolded email assets
 - Python package metadata for installation and packaged email template assets
 - Static project website with landing page, docs page, and copyable snippets
-- GitHub Pages deployment workflow, custom domain configuration, and PR branch policy enforcement
+- Custom domain configuration, branch-based GitHub Pages publishing, and PR branch policy enforcement
 
 ### Changed
 
@@ -28,6 +28,7 @@ This repository uses GitHub Actions to:
 - Call models now generate UUIDs on the Python side as well as PostgreSQL side, which improves testability
 - README and contribution guidance now document built-in SDK usage and require docs to ship with feature changes
 - README and deployment docs now document GitHub package installs, protected branch promotion, and website hosting steps
+- The site now publishes from the committed `docs/` folder on `main` instead of a GitHub Actions Pages workflow
 
 ### Security
 

@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Documentation | Messaging and Calling Backend</title>
+    <meta
+      name="description"
+      content="Full documentation for the Messaging and Calling Backend SDK."
+    />
+    <link rel="stylesheet" href="./assets/styles.css" />
+  </head>
+  <body class="docs-body">
+    <header class="docs-topbar">
+      <a class="brand" href="./index.html">Messaging & Calling Backend</a>
+      <div class="topbar-links">
+        <a href="./index.html">Home</a>
+        <a href="#install">Install</a>
+        <a href="#email-customization">Email</a>
+        <a href="#architecture">Architecture</a>
+      </div>
+    </header>
+
+    <div class="docs-layout">
+      <aside class="docs-sidebar">
+        <h2>Documentation</h2>
+        <a href="#install">Install and setup</a>
+        <a href="#current-state">Current package state</a>
+        <a href="#delivery-flow">Promotion flow</a>
+        <a href="#cli">CLI usage</a>
+        <a href="#email-customization">Email customization</a>
+        <a href="#auth">Authentication</a>
+        <a href="#messaging">Messaging</a>
+        <a href="#calling">Calling</a>
+        <a href="#search">Search</a>
+        <a href="#architecture">Architecture</a>
+      </aside>
+
+      <main class="docs-content">
+        <section id="install">
+          <p class="eyebrow">Install and setup</p>
+          <h1>Build on top of the SDK in your own product</h1>
+          <p>
+            The project now includes Python packaging metadata so you can install it
+            into an existing FastAPI application directly from GitHub. The current
+            distribution path is GitHub install URLs, not PyPI.
+          </p>
+          <div class="snippet-frame">
+            <div class="snippet-head">
+              <span>Install from GitHub main</span>
+              <button class="copy-trigger" data-copy-source="docs-install">Copy</button>
+            </div>
+            <pre id="docs-install"><code>pip install "git+https://github.com/ukemeikot/messaging-and-calling-backend.git@main#subdirectory=messaging_and_calling_backend"
+Copy-Item .env.example .env
+alembic upgrade head
+uvicorn messaging_sdk.main:app --reload</code></pre>
+          </div>
+          <div class="snippet-frame">
+            <div class="snippet-head">
+              <span>Install a tagged release</span>
+              <button class="copy-trigger" data-copy-source="docs-install-tag">Copy</button>
+            </div>
+            <pre id="docs-install-tag"><code>pip install "git+https://github.com/ukemeikot/messaging-and-calling-backend.git@v1.0.0#subdirectory=messaging_and_calling_backend"</code></pre>
+          </div>
+          <div class="snippet-frame">
+            <div class="snippet-head">
+              <span>Minimal environment</span>
+              <button class="copy-trigger" data-copy-source="env-snippet">Copy</button>
+            </div>
+            <pre id="env-snippet"><code>DATABASE_URL=postgresql+asyncpg://user:password@localhost:5432/messaging_db
+SECRET_KEY=replace-this-with-a-long-random-secret-key
+EMAIL_PROVIDER=console
+FRONTEND_URL=http://localhost:3000
+ENVIRONMENT=development
+DEBUG=false
+CORS_ORIGINS=["http://localhost:3000"]</code></pre>
+          </div>
+        </section>
+
+        <section id="current-state">
+          <p class="eyebrow">Package state</p>
+          <h2>What is package-ready now</h2>
+          <ul class="plain-list">
+            <li>`pyproject.toml` defines build metadata and a CLI entry point</li>
+            <li>Email templates are included as package data</li>
+            <li>`messaging-sdk` can be used as a console command after installation</li>
+            <li>The SDK still works from source for local integration and iteration</li>
+            <li>The repository is currently set up for GitHub installs rather than PyPI publication</li>
+          </ul>
+          <p>
+            Before public publication, you should still decide on a final license,
+            repository URLs, and the exact distribution channel you want to use.
+          </p>
+        </section>
+
+        <section id="delivery-flow">
+          <p class="eyebrow">Promotion flow</p>
+          <h2>How code moves to production</h2>
+          <div class="snippet-frame">
+            <pre><code>feature/my-change
+  -> pull request to develop
+develop
+  -> pull request to main
+main
+  -> changelog update + draft release + website deploy</code></pre>
+          </div>
+          <p>
+            The repository includes a pull request policy workflow that rejects
+            invalid promotion paths.
+          </p>
+        </section>
+
+        <section id="cli">
+          <p class="eyebrow">CLI</p>
+          <h2>Scaffold a project or inspect config</h2>
+          <div class="snippet-grid">
+            <div class="snippet-frame">
+              <div class="snippet-head">
+                <span>Scaffold project</span>
+                <button class="copy-trigger" data-copy-source="cli-init">Copy</button>
+              </div>
+              <pre id="cli-init"><code>messaging-sdk init --project-name my_app
+messaging-sdk init --project-name my_app --template full</code></pre>
+            </div>
+            <div class="snippet-frame">
+              <div class="snippet-head">
+                <span>Inspect config</span>
+                <button class="copy-trigger" data-copy-source="cli-config">Copy</button>
+              </div>
+              <pre id="cli-config"><code>messaging-sdk config
+messaging-sdk db --check-config</code></pre>
+            </div>
+          </div>
+          <p>
+            Generated projects include editable email templates, theme values, and
+            hook files so teams can customize the SDK behavior immediately.
+          </p>
+        </section>
+
+        <section id="email-customization">
+          <p class="eyebrow">Customization</p>
+          <h2>Override built-in email behavior</h2>
+          <p>
+            The email system is layered. You can use packaged defaults, override
+            template files through `EMAIL_TEMPLATE_DIR`, or register Python hooks
+            through `EmailCustomization`.
+          </p>
+          <div class="snippet-frame">
+            <div class="snippet-head">
+              <span>Email config</span>
+              <button class="copy-trigger" data-copy-source="email-env">Copy</button>
+            </div>
+            <pre id="email-env"><code>EMAIL_TEMPLATE_DIR=app/email_templates
+EMAIL_THEME_APP_NAME=Messaging Platform
+EMAIL_THEME_PRIMARY_COLOR=#1d4ed8
+EMAIL_THEME_ACCENT_COLOR=#0f172a
+EMAIL_THEME_SUPPORT_EMAIL=support@example.com
+EMAIL_THEME_FOOTER_TEXT=Sent by Messaging Platform</code></pre>
+          </div>
+          <div class="snippet-frame">
+            <div class="snippet-head">
+              <span>Programmatic customization</span>
+              <button class="copy-trigger" data-copy-source="email-python">Copy</button>
+            </div>
+            <pre id="email-python"><code>from messaging_sdk import MessagingApp
+from messaging_sdk.core.config import Settings
+from messaging_sdk.emailing import EmailCustomization, EmailTheme
+
+
+def build_password_reset_link(context):
+    token = context.tokens["reset_token"]
+    return f"https://accounts.example.com/reset/{token}"
+
+
+settings = Settings()
+email_customization = EmailCustomization(
+    template_dir=settings.email_template_dir,
+    theme=EmailTheme(
+        app_name="Acme Chat",
+        primary_color="#2563eb",
+        accent_color="#111827",
+        support_email="support@acme.test",
+        footer_text="Sent by Acme Chat",
+    ),
+    link_builders={"password_reset": build_password_reset_link},
+)
+
+app = MessagingApp(settings=settings, email_customization=email_customization)</code></pre>
+          </div>
+          <div class="snippet-frame">
+            <div class="snippet-head">
+              <span>Scaffold hook example</span>
+              <button class="copy-trigger" data-copy-source="email-hook-snippet">Copy</button>
+            </div>
+            <pre id="email-hook-snippet"><code>def before_render(context):
+    context.data["subject"] = "Please confirm your account"
+    return context
+
+
+def after_render(message, context):
+    message.text_body += "\n\nSent from Acme Chat"
+    return message</code></pre>
+          </div>
+        </section>
+
+        <section id="auth">
+          <p class="eyebrow">Authentication</p>
+          <h2>Built-in identity flows</h2>
+          <ul class="plain-list">
+            <li>`/api/v1/auth/register` and `/api/v1/auth/login` for local account auth</li>
+            <li>`/api/v1/auth/me` for the current authenticated user</li>
+            <li>`/api/v1/auth/resend-verification` and `/api/v1/auth/verify-email` for verification</li>
+            <li>`/api/v1/auth/forgot-password` and `/api/v1/auth/reset-password` for password recovery</li>
+            <li>`/api/v1/auth/google/*` for Google OAuth web and mobile flows</li>
+          </ul>
+        </section>
+
+        <section id="messaging">
+          <p class="eyebrow">Messaging</p>
+          <h2>Contacts, conversations, and realtime chat</h2>
+          <ul class="plain-list">
+            <li>Direct conversations require accepted contact relationships</li>
+            <li>Group chats support admins, member management, and admin-only add-member settings</li>
+            <li>Messages support send, edit, delete, typing events, and read receipts</li>
+            <li>Conversation membership is enforced before reads and writes are allowed</li>
+          </ul>
+        </section>
+
+        <section id="calling">
+          <p class="eyebrow">Calling</p>
+          <h2>Voice and video call lifecycle</h2>
+          <ul class="plain-list">
+            <li>Initiate, answer, decline, end, and invite participants to calls</li>
+            <li>Separate participant and invitation records for group call growth</li>
+            <li>WebSocket signaling membership is validated against stored call participation</li>
+          </ul>
+        </section>
+
+        <section id="search">
+          <p class="eyebrow">Search</p>
+          <h2>Search capabilities</h2>
+          <ul class="plain-list">
+            <li>User search</li>
+            <li>Message search</li>
+            <li>Conversation search</li>
+            <li>Global search aggregation</li>
+          </ul>
+          <p>
+            Search currently depends on PostgreSQL full-text and similarity
+            operators, so it should be treated as PostgreSQL-only.
+          </p>
+        </section>
+
+        <section id="architecture">
+          <p class="eyebrow">Architecture</p>
+          <h2>Implementation schema</h2>
+          <div class="snippet-frame">
+            <pre><code>MessagingApp
+|
++-- api/v1/      routers and websocket endpoints
++-- services/    business rules
++-- models/      SQLAlchemy entities
++-- core/        config, security, dependencies
++-- emailing.py  template composition and theme runtime
++-- providers/   delivery transports
++-- cli/         project scaffolding and config helpers</code></pre>
+          </div>
+          <div class="snippet-frame">
+            <pre><code>Client
+  -> FastAPI routers
+    -> dependencies and auth checks
+      -> service layer
+        -> database / websocket manager / email service
+          -> email composer
+            -> templates + theme
+          -> provider delivery</code></pre>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="./assets/app.js"></script>
+  </body>
+</html>
