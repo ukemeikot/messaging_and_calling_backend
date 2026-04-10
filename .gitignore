@@ -1,45 +1,50 @@
-# Virtual Environment
+# Virtual environments
+.venv/
 venv/
 env/
 ENV/
 
-# Python
+# Python cache and build output
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
+*.egg-info/
+build/
+dist/
+.mypy_cache/
+.ruff_cache/
 
-# Environment variables
+# Local environment files
 .env
 .env.local
 .env.production
 
-# Database
+# Databases and local test artifacts
 *.db
 *.sqlite3
+.test-artifacts/
+pytest-cache-files-*/
 
-# Uploads
-uploads/
-
-# Testing
+# Coverage and pytest output
 .pytest_cache/
 .coverage
+.coverage.*
 htmlcov/
 
-# IDE
+# User-generated uploads
+uploads/
+
+# IDE and editor files
 .vscode/
 .idea/
 *.swp
 *.swo
 
-# OS
+# OS files
 .DS_Store
 Thumbs.db
 
 # Logs
 *.log
-check_db.py
-
-.env.example
-.env.production.example

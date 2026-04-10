@@ -1,28 +1,22 @@
 """
-Messaging & Calling SDK
+Messaging & Calling SDK public package surface.
 
-A production-ready SDK for building messaging and calling applications.
-
-Usage:
-    from messaging_sdk import MessagingApp
-    from messaging_sdk.core.config import settings
-
-    app = MessagingApp(settings=settings)
+The package keeps imports intentionally light so utilities such as the CLI can
+be executed before the full application configuration is available.
 """
+
+from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
-from pathlib import Path
-import os
 
-from messaging_sdk.core.config import Settings
-from messaging_sdk.api.v1 import auth, profile, contacts, chat, search, calls
-from messaging_sdk.api.v1 import websocket_signaling
-from messaging_sdk.core.dependencies import get_db
-from messaging_sdk.database import engine, Base
-import asyncio
+from messaging_sdk.emailing import EmailCustomization, configure_email_runtime
+
+
+__version__ = "1.0.0"
 
 
 class MessagingApp(FastAPI):
@@ -40,12 +34,13 @@ class MessagingApp(FastAPI):
 
     def __init__(
         self,
-        settings: Settings,
+        settings: Any,
+        email_customization: EmailCustomization | None = None,
         title: str = "Messaging & Calling API",
         description: str = "Production-ready messaging and calling API with OAuth",
         version: str = "1.0.0",
         **kwargs
-    ):
+        ):
         """
         Initialize the MessagingApp.
 
@@ -66,6 +61,7 @@ class MessagingApp(FastAPI):
         )
 
         self.settings = settings
+        self.email_customization = email_customization
 
         # Validate configuration
         issues = settings.validate_configuration()
@@ -74,6 +70,7 @@ class MessagingApp(FastAPI):
             raise ValueError(error_msg)
 
         # Configure the application
+        configure_email_runtime(settings, email_customization)
         self._configure_middleware()
         self._configure_routes()
         self._configure_static_files()
@@ -81,6 +78,9 @@ class MessagingApp(FastAPI):
 
     def _configure_middleware(self):
         """Configure middleware (CORS, sessions, etc.)."""
+        if "*" in self.settings.deployment.cors_origins and self.settings.deployment.environment != "development":
+            raise ValueError("Wildcard CORS origins are only allowed in development")
+
         # Session middleware (required for OAuth)
         self.add_middleware(
             SessionMiddleware,
@@ -101,6 +101,9 @@ class MessagingApp(FastAPI):
 
     def _configure_routes(self):
         """Configure API routes."""
+        from messaging_sdk.api.v1 import auth, profile, contacts, chat, search, calls
+        from messaging_sdk.api.v1 import websocket_signaling
+
         # Include API routers
         self.include_router(auth.router, prefix="/api/v1", tags=["Authentication"])
         self.include_router(profile.router, prefix="/api/v1", tags=["Profile"])
@@ -124,11 +127,12 @@ class MessagingApp(FastAPI):
 
     def _configure_database(self):
         """Configure database connection and create tables."""
-        # Create tables asynchronously
-        asyncio.create_task(self._create_tables())
+        self.add_event_handler("startup", self._create_tables)
 
     async def _create_tables(self):
         """Create database tables."""
+        from messaging_sdk.database import engine, Base
+
         try:
             async with engine.begin() as conn:
                 # Create all tables
@@ -151,6 +155,23 @@ class MessagingApp(FastAPI):
 # Export key components for easy importing
 __all__ = [
     "MessagingApp",
-    "Settings",
-    "get_db",
+    "EmailCustomization",
+    "__version__",
 ]
+
+
+def __getattr__(name: str):
+    """Provide backward-compatible lazy exports."""
+    if name == "Settings":
+        from messaging_sdk.core.config import Settings
+
+        return Settings
+    if name == "get_db":
+        from messaging_sdk.database import get_db
+
+        return get_db
+    if name == "EmailTheme":
+        from messaging_sdk.emailing import EmailTheme
+
+        return EmailTheme
+    raise AttributeError(f"module 'messaging_sdk' has no attribute {name!r}")

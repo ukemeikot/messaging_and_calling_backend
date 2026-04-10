@@ -139,7 +139,6 @@ class UserSearchResult(BaseModel):
     id: uuid.UUID
     username: str
     full_name: Optional[str] = None
-    email: str
     avatar_url: Optional[str] = None
     is_online: bool
     is_verified: bool

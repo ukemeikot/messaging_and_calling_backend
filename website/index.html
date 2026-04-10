@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Messaging and Calling Backend</title>
+    <meta
+      name="description"
+      content="FastAPI messaging and calling backend SDK with authentication, chat, calling, search, and customizable email flows."
+    />
+    <link rel="stylesheet" href="./assets/styles.css" />
+  </head>
+  <body>
+    <header class="hero-shell">
+      <nav class="topbar">
+        <a class="brand" href="./index.html">Messaging & Calling Backend</a>
+        <div class="topbar-links">
+          <a href="./docs.html">Docs</a>
+          <a href="#features">Features</a>
+          <a href="#install">Install</a>
+        </div>
+      </nav>
+
+      <section class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">FastAPI SDK</p>
+          <h1>Ship messaging and calling into your product without building the backend from scratch.</h1>
+          <p class="lede">
+            Authentication, contacts, chat, calls, signaling, search, profile
+            management, and customizable email flows in one source-integrated SDK.
+          </p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="./docs.html">Read the Docs</a>
+            <button class="button button-secondary copy-trigger" data-copy-source="install-snippet">
+              Copy Install
+            </button>
+          </div>
+          <pre class="snippet-card" id="install-snippet"><code>pip install "git+https://github.com/ukemeikot/messaging-and-calling-backend.git@main#subdirectory=messaging_and_calling_backend"
+uvicorn messaging_sdk.main:app --reload</code></pre>
+        </div>
+        <div class="hero-panel">
+          <div class="status-card">
+            <span>SDK surface</span>
+            <strong>Auth, chat, calls, search, email customization</strong>
+          </div>
+          <div class="status-card">
+            <span>Project shape</span>
+            <strong>Installable package + source CLI + docs website</strong>
+          </div>
+          <div class="status-card">
+            <span>Docs UX</span>
+            <strong>Copyable snippets, env blocks, and architecture views</strong>
+          </div>
+        </div>
+      </section>
+    </header>
+
+    <main>
+      <section class="section" id="features">
+        <div class="section-heading">
+          <p class="eyebrow">Built in</p>
+          <h2>What the SDK already gives you</h2>
+        </div>
+        <div class="feature-grid">
+          <article class="feature-card">
+            <h3>Authentication</h3>
+            <p>JWT auth, email verification, password reset, Google OAuth web and mobile flows.</p>
+          </article>
+          <article class="feature-card">
+            <h3>Messaging</h3>
+            <p>Direct conversations, groups, message editing, soft deletes, read state, and WebSocket events.</p>
+          </article>
+          <article class="feature-card">
+            <h3>Calling</h3>
+            <p>Voice and video call lifecycle APIs with signaling WebSockets and participant validation.</p>
+          </article>
+          <article class="feature-card">
+            <h3>Customization</h3>
+            <p>Editable email templates, theme values, and Python hooks for project-specific behavior.</p>
+          </article>
+          <article class="feature-card">
+            <h3>Profiles and contacts</h3>
+            <p>Profile management, uploads, contact requests, blocking, and relationship-aware rules.</p>
+          </article>
+          <article class="feature-card">
+            <h3>Search</h3>
+            <p>PostgreSQL-backed user, message, conversation, and global search endpoints.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section section-band" id="install">
+        <div class="section-heading">
+          <p class="eyebrow">Install</p>
+          <h2>Use it as a package, then build your product on top</h2>
+        </div>
+        <div class="two-column">
+          <div>
+            <p>
+              The project now includes package metadata and packaged email templates,
+              so teams can install it into an existing FastAPI codebase instead of
+              only vendoring the repository.
+            </p>
+            <ul class="plain-list">
+              <li>Install directly from GitHub without publishing to PyPI</li>
+              <li>Pin consumers to `main` or a tagged GitHub release</li>
+              <li>Use the `messaging-sdk` CLI entry point after installation</li>
+              <li>Mount `MessagingApp` directly in your current product</li>
+            </ul>
+          </div>
+          <div class="snippet-stack">
+            <div class="snippet-frame">
+              <div class="snippet-head">
+                <span>Install from GitHub</span>
+                <button class="copy-trigger" data-copy-source="source-install">Copy</button>
+              </div>
+              <pre id="source-install"><code>pip install "git+https://github.com/ukemeikot/messaging-and-calling-backend.git@main#subdirectory=messaging_and_calling_backend"
+messaging-sdk config</code></pre>
+            </div>
+            <div class="snippet-frame">
+              <div class="snippet-head">
+                <span>Mount in FastAPI</span>
+                <button class="copy-trigger" data-copy-source="mount-snippet">Copy</button>
+              </div>
+              <pre id="mount-snippet"><code>from messaging_sdk import MessagingApp
+from messaging_sdk.core.config import Settings
+
+settings = Settings()
+app = MessagingApp(settings=settings, title="My Product Messaging API")</code></pre>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-heading">
+          <p class="eyebrow">Project map</p>
+          <h2>Implementation shape</h2>
+        </div>
+        <div class="architecture-card">
+<pre><code>MessagingApp
+|
++-- api/v1/      routers and websocket endpoints
++-- services/    business rules
++-- models/      SQLAlchemy entities
++-- core/        config, security, dependencies
++-- emailing.py  template composition and theme runtime
++-- providers/   delivery transports
++-- cli/         project scaffolding and config helpers</code></pre>
+        </div>
+        <p class="section-link">
+          Full feature guide, copyable snippets, and setup details live in <a href="./docs.html">the documentation site</a>.
+        </p>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>Messaging and Calling Backend documentation website.</p>
+      <a href="./docs.html">Open full docs</a>
+    </footer>
+
+    <script src="./assets/app.js"></script>
+  </body>
+</html>

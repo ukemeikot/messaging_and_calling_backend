@@ -23,6 +23,29 @@ class MessageService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
+    async def _get_participant_record(
+        self,
+        conversation_id: uuid.UUID,
+        user_id: uuid.UUID,
+    ) -> Optional[ConversationParticipant]:
+        result = await self.db.execute(
+            select(ConversationParticipant).where(
+                ConversationParticipant.conversation_id == conversation_id,
+                ConversationParticipant.user_id == user_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def require_participant(
+        self,
+        conversation_id: uuid.UUID,
+        user_id: uuid.UUID,
+    ) -> ConversationParticipant:
+        participant = await self._get_participant_record(conversation_id, user_id)
+        if not participant:
+            raise ValueError("You are not a participant in this conversation")
+        return participant
+
     # ============================================
     # CONVERSATION MANAGEMENT
     # ============================================
@@ -307,6 +330,8 @@ class MessageService:
         """
         Send a new message in a conversation.
         """
+        await self.require_participant(conversation_id, sender_id)
+
         msg = Message(
             conversation_id=conversation_id, 
             sender_id=sender_id, 
@@ -392,14 +417,8 @@ class MessageService:
         """
         Mark all messages up to a specific message as read.
         """
-        res = await self.db.execute(
-            select(ConversationParticipant).where(
-                ConversationParticipant.conversation_id == conversation_id, 
-                ConversationParticipant.user_id == user_id
-            )
-        )
-        participant = res.scalar_one_or_none()
-        if not participant: 
+        participant = await self._get_participant_record(conversation_id, user_id)
+        if not participant:
             return False
             
         participant.last_read_message_id = last_read_message_id
@@ -422,6 +441,8 @@ class MessageService:
         """
         Retrieve messages from a conversation with pagination.
         """
+        await self.require_participant(conversation_id, user_id)
+
         query = select(Message).options(
             selectinload(Message.sender)
         ).where(
@@ -452,6 +473,15 @@ class MessageService:
         )
         return list(res.scalars().all())
 
+    async def get_all_participants_for_user(
+        self,
+        conversation_id: uuid.UUID,
+        user_id: uuid.UUID,
+    ) -> List[uuid.UUID]:
+        """Return conversation participants after access validation."""
+        await self.require_participant(conversation_id, user_id)
+        return await self.get_all_participants(conversation_id)
+
     async def get_conversation_by_id(
         self, 
         conv_id: uuid.UUID, 
@@ -460,8 +490,10 @@ class MessageService:
         """
         Get a conversation by ID with all related data loaded.
         """
+        await self.require_participant(conv_id, user_id)
+
         res = await self.db.execute(
-            select(Conversation).options(
+            select(Conversation).execution_options(populate_existing=True).options(
                 selectinload(Conversation.participants).selectinload(ConversationParticipant.user),
                 selectinload(Conversation.messages).selectinload(Message.sender)
             ).where(Conversation.id == conv_id)

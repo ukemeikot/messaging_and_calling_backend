@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "messaging-and-calling-backend"
+version = "1.0.0"
+description = "FastAPI messaging and calling backend SDK with auth, chat, calling, search, and customizable email flows."
+readme = { file = "README.md", content-type = "text/markdown" }
+requires-python = ">=3.11"
+authors = [
+  { name = "Messaging and Calling Backend Contributors" }
+]
+keywords = [
+  "fastapi",
+  "messaging",
+  "calling",
+  "webrtc",
+  "chat",
+  "sdk"
+]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Framework :: FastAPI",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Topic :: Internet :: WWW/HTTP :: WSGI :: Application",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dynamic = ["dependencies"]
+
+[project.scripts]
+messaging-sdk = "messaging_sdk.cli:cli"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+
+[tool.setuptools.packages.find]
+include = ["messaging_sdk*"]
+exclude = [
+  "messaging_sdk.messaging_sdk*",
+  "tests*",
+  "website*"
+]
+
+[tool.setuptools.package-data]
+messaging_sdk = [
+  "email_templates/*.html",
+  "email_templates/*.txt",
+  "email_templates/_partials/*.html"
+]

@@ -172,7 +172,9 @@ async def get_conversation(
     service = MessageService(db)
     try:
         return await service.get_conversation_by_id(conversation_id, current_user.id)
-    except Exception as e:
+    except ValueError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except Exception:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
 # ============================================
@@ -744,7 +746,10 @@ async def websocket_endpoint(
                     # Determine if user is typing or stopped
                     is_typing = message_type in ["typing_start", "typing"]
                     
-                    participant_ids = await service.get_all_participants(conversation_id)
+                    participant_ids = await service.get_all_participants_for_user(
+                        conversation_id,
+                        user_id,
+                    )
                     
                     # Don't send typing indicator back to sender
                     other_participants = [pid for pid in participant_ids if pid != user_id]
@@ -776,7 +781,10 @@ async def websocket_endpoint(
                     
                     if success:
                         # Broadcast read receipt to other participants
-                        participant_ids = await service.get_all_participants(conversation_id)
+                        participant_ids = await service.get_all_participants_for_user(
+                            conversation_id,
+                            user_id,
+                        )
                         other_participants = [pid for pid in participant_ids if pid != user_id]
                         
                         await manager.broadcast_to_conversation(

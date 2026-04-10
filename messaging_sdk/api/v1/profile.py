@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from messaging_sdk.database import get_db
 from messaging_sdk.core.dependencies import get_current_user
 from messaging_sdk.models.user import User
-from messaging_sdk.schemas.user import UserResponse
+from messaging_sdk.schemas.user import UserResponse, PublicUserResponse
 from messaging_sdk.schemas.profile import (
     ProfileUpdate, 
     PasswordChange, 
@@ -18,13 +18,24 @@ from messaging_sdk.services.profile_service import ProfileService
 from messaging_sdk.services.user_service import UserService
 from messaging_sdk.core.security import verify_password  # Added this import
 import uuid
-import os
 from pathlib import Path
+import secrets
 
 router = APIRouter(
     prefix="/profile",
     tags=["Profile Management"]
 )
+
+
+def _detect_image_type(file_content: bytes) -> tuple[str, str] | None:
+    """Detect a supported image type from magic bytes."""
+    if file_content.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg", ".jpg"
+    if file_content.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png", ".png"
+    if file_content[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif", ".gif"
+    return None
 
 @router.get(
     "",
@@ -102,18 +113,6 @@ async def upload_profile_picture(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    # Validate file type
-    allowed_types = ["image/jpeg", "image/png", "image/gif"]
-    if file.content_type not in allowed_types:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "error": "invalid_file_type",
-                "message": f"Only JPEG, PNG, and GIF images are allowed. Got: {file.content_type}",
-                "allowed_types": allowed_types
-            }
-        )
-    
     # Validate file size (5MB max)
     max_size = 5 * 1024 * 1024
     file_content = await file.read()
@@ -126,14 +125,26 @@ async def upload_profile_picture(
                 "max_size_mb": 5
             }
         )
-    
+
+    detected_type = _detect_image_type(file_content)
+    allowed_types = ["image/jpeg", "image/png", "image/gif"]
+    if not detected_type:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "invalid_file_type",
+                "message": "Only JPEG, PNG, and GIF images are allowed.",
+                "allowed_types": allowed_types,
+            },
+        )
+
+    _, safe_extension = detected_type
+
     # Create uploads directory
     upload_dir = Path("uploads/profile_pictures")
     upload_dir.mkdir(parents=True, exist_ok=True)
     
-    # Generate unique filename
-    file_extension = Path(file.filename or "image.jpg").suffix
-    unique_filename = f"{current_user.id}{file_extension}"
+    unique_filename = f"{current_user.id}-{secrets.token_hex(8)}{safe_extension}"
     file_path = upload_dir / unique_filename
     
     # Save file
@@ -155,7 +166,7 @@ async def upload_profile_picture(
 
 @router.get(
     "/{user_id}",
-    response_model=UserResponse,
+    response_model=PublicUserResponse,
     summary="Get user profile by ID",
     description="Get any user's public profile information."
 )
@@ -175,7 +186,7 @@ async def get_user_profile(
             }
         )
     
-    return UserResponse.model_validate(user)
+    return PublicUserResponse.model_validate(user)
 
 @router.delete(
     "",

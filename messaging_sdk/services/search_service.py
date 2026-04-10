@@ -104,7 +104,6 @@ class SearchService:
                 id=user_obj.id,
                 username=user_obj.username,
                 full_name=user_obj.full_name,
-                email=user_obj.email,
                 avatar_url=user_obj.profile_picture_url,
                 is_online=user_obj.is_online or False,
                 is_verified=user_obj.is_verified or False,

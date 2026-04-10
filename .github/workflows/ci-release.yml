@@ -1,0 +1,136 @@
+name: CI and Release
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+  push:
+    branches:
+      - develop
+      - main
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  test:
+    name: Test Suite
+    if: github.actor != 'github-actions[bot]' || github.event_name == 'pull_request' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: sqlite+aiosqlite:///./ci-test.db
+      SECRET_KEY: ci-test-secret-key-ci-test-secret-key
+      EMAIL_PROVIDER: console
+      FRONTEND_URL: http://localhost:3000
+      GOOGLE_CLIENT_ID: ""
+      GOOGLE_CLIENT_SECRET: ""
+      GOOGLE_REDIRECT_URI: ""
+      DEBUG: "false"
+      PYTHONPATH: .
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        run: pytest
+
+  update_changelog:
+    name: Update Changelog
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor != 'github-actions[bot]'
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Resolve changelog entry
+        id: changelog
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pulls = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: context.sha,
+            });
+            const mergedPr = pulls.data.find((pr) => pr.merged_at);
+            const title =
+              mergedPr?.title ||
+              context.payload.head_commit?.message?.split("\n")[0] ||
+              `Main update ${context.sha.slice(0, 7)}`;
+            const number = mergedPr?.number || "";
+            const labels = (mergedPr?.labels || []).map((label) =>
+              String(label.name).toLowerCase()
+            );
+
+            let category = "Changed";
+            if (labels.includes("breaking")) {
+              category = "Breaking";
+            } else if (labels.includes("feature") || labels.includes("enhancement")) {
+              category = "Added";
+            } else if (labels.includes("security")) {
+              category = "Security";
+            }
+
+            const entry = number ? `- ${title} (#${number})` : `- ${title}`;
+            core.setOutput("category", category);
+            core.setOutput("entry", entry);
+
+      - name: Update CHANGELOG.md
+        env:
+          CHANGELOG_CATEGORY: ${{ steps.changelog.outputs.category }}
+          CHANGELOG_ENTRY: ${{ steps.changelog.outputs.entry }}
+        run: python .github/scripts/update_changelog.py
+
+      - name: Commit changelog update
+        run: |
+          if git diff --quiet -- CHANGELOG.md; then
+            echo "No changelog changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          git commit -m "docs(changelog): record main merge [skip ci]"
+          git push
+
+  draft_release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor != 'github-actions[bot]'
+    needs:
+      - test
+      - update_changelog
+    runs-on: ubuntu-latest
+    steps:
+      - uses: release-drafter/release-drafter@v6
+        with:
+          config-name: release-drafter.yml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish_release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
