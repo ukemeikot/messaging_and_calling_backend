@@ -25,6 +25,38 @@ class CallService:
     
     def __init__(self, db: AsyncSession):
         self.db = db
+
+    async def validate_signaling_access(
+        self,
+        call_id: uuid.UUID,
+        user_id: uuid.UUID,
+        to_user_id: Optional[uuid.UUID] = None,
+    ) -> Call:
+        """Ensure a user is allowed to exchange signaling messages for a call."""
+        call = await self._get_call_with_participants(call_id)
+        if not call:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Call not found")
+
+        if call.status not in ["ringing", "active"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Call is not active for signaling",
+            )
+
+        participant_ids = {participant.user_id for participant in call.participants}
+        if user_id not in participant_ids:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You are not a participant in this call",
+            )
+
+        if to_user_id and to_user_id not in participant_ids:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Target user is not a participant in this call",
+            )
+
+        return call
     
     # ============================================
     # Call Initiation

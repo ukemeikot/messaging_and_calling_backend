@@ -15,8 +15,9 @@ Endpoints:
 - POST /google/token-exchange - Google native token exchange (mobile SDK)
 """
 
-import os
 import logging
+import os
+import secrets
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request, BackgroundTasks
@@ -40,7 +41,13 @@ from messaging_sdk.core.security import (
     verify_verification_token,
     create_password_reset_token,
     verify_password_reset_token,
-    hash_password
+    hash_password,
+    password_reset_state_matches,
+)
+from messaging_sdk.core.transient_store import (
+    mobile_auth_code_store,
+    rate_limiter,
+    used_token_store,
 )
 from messaging_sdk.core.dependencies import get_current_user
 from messaging_sdk.schemas.user import (
@@ -53,6 +60,7 @@ from messaging_sdk.schemas.user import (
     VerificationStatus,
     OAuthCallbackResponse,
     GoogleTokenExchange,
+    MobileCodeExchangeRequest,
     EmailVerificationRequest,
     PasswordResetRequest,
     PasswordResetConfirm
@@ -71,6 +79,21 @@ router = APIRouter(
 )
 
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15"))
+
+
+def _client_ip(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
+
+
+def _enforce_rate_limit(key: str, limit: int, window_seconds: int, message: str) -> None:
+    if not rate_limiter.hit(key, limit, window_seconds):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "error": "rate_limit_exceeded",
+                "message": message,
+            },
+        )
 
 # -------------------------------------------------------------------
 # Background Task for Email Sending
@@ -105,7 +128,8 @@ async def send_verification_email_task(
 async def send_password_reset_email_task(
     email: str,
     username: str,
-    user_id: uuid.UUID
+    user_id: uuid.UUID,
+    password_state: str,
 ):
     """
     Background task to send password reset email.
@@ -113,7 +137,7 @@ async def send_password_reset_email_task(
     """
     try:
         email_service = EmailService()
-        token = create_password_reset_token(user_id, email)
+        token = create_password_reset_token(user_id, email, password_state)
         await email_service.send_password_reset_email(
             to_email=email,
             username=username,
@@ -260,8 +284,23 @@ async def register(
 )
 async def login(
     login_data: UserLogin,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ):
+    client_ip = _client_ip(request)
+    _enforce_rate_limit(
+        f"login:ip:{client_ip}",
+        limit=10,
+        window_seconds=300,
+        message="Too many login attempts from this IP. Please try again later.",
+    )
+    _enforce_rate_limit(
+        f"login:account:{login_data.username_or_email.lower()}",
+        limit=8,
+        window_seconds=300,
+        message="Too many login attempts for this account. Please try again later.",
+    )
+
     user_service = UserService(db)
 
     user = await user_service.authenticate_user(
@@ -356,6 +395,7 @@ async def get_me(current_user: User = Depends(get_current_user)):
 )
 async def resend_verification_email(
     request_data: EmailVerificationRequest,
+    request: Request,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db)
 ):
@@ -371,6 +411,20 @@ async def resend_verification_email(
         Success message (always, for security)
     """
     
+    client_ip = _client_ip(request)
+    _enforce_rate_limit(
+        f"verify:resend:ip:{client_ip}",
+        limit=5,
+        window_seconds=3600,
+        message="Too many verification email requests. Please try again later.",
+    )
+    _enforce_rate_limit(
+        f"verify:resend:email:{request_data.email.lower()}",
+        limit=3,
+        window_seconds=3600,
+        message="Too many verification email requests for this account. Please try again later.",
+    )
+
     user_service = UserService(db)
     
     # Find user by email
@@ -420,6 +474,7 @@ async def resend_verification_email(
 )
 async def verify_email(
     token: str,
+    request: Request,
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -437,7 +492,13 @@ async def verify_email(
         HTTPException 404: User not found
     """
     
-    # Verify token
+    _enforce_rate_limit(
+        f"verify:token:{_client_ip(request)}",
+        limit=20,
+        window_seconds=3600,
+        message="Too many verification attempts. Please try again later.",
+    )
+
     try:
         token_data = verify_verification_token(token)
         logger.info(f"Token verified for user_id: {token_data.get('user_id')}")
@@ -450,6 +511,17 @@ async def verify_email(
                 "message": "Invalid or expired verification token",
                 "action": "Request a new verification email"
             }
+        )
+
+    token_jti = token_data.get("jti")
+    if not token_jti or used_token_store.contains(f"verify:{token_jti}"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "invalid_token",
+                "message": "Verification token has already been used or is invalid",
+                "action": "Request a new verification email",
+            },
         )
     
     # Get user
@@ -502,6 +574,7 @@ async def verify_email(
     user.is_verified = True
     await db.commit()
     await db.refresh(user)
+    used_token_store.put(f"verify:{token_jti}", True, 86400)
     
     logger.info(f"Email verified successfully for {user.email}")
     
@@ -544,6 +617,7 @@ async def verify_email(
 )
 async def forgot_password(
     request_data: PasswordResetRequest,
+    request: Request,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db)
 ):
@@ -559,6 +633,20 @@ async def forgot_password(
         Success message (always, for security)
     """
     
+    client_ip = _client_ip(request)
+    _enforce_rate_limit(
+        f"password-reset:request:ip:{client_ip}",
+        limit=5,
+        window_seconds=3600,
+        message="Too many password reset requests. Please try again later.",
+    )
+    _enforce_rate_limit(
+        f"password-reset:request:email:{request_data.email.lower()}",
+        limit=3,
+        window_seconds=3600,
+        message="Too many password reset requests for this account. Please try again later.",
+    )
+
     user_service = UserService(db)
     
     # Find user by email
@@ -570,7 +658,8 @@ async def forgot_password(
             send_password_reset_email_task,
             email=user.email,
             username=user.username,
-            user_id=user.id
+            user_id=user.id,
+            password_state=str(user.hashed_password),
         )
         logger.info(f" Password reset email queued for {user.email}")
     else:
@@ -605,6 +694,7 @@ async def forgot_password(
 )
 async def reset_password(
     reset_data: PasswordResetConfirm,
+    request: Request,
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -622,6 +712,13 @@ async def reset_password(
         HTTPException 404: User not found
     """
     
+    _enforce_rate_limit(
+        f"password-reset:confirm:ip:{_client_ip(request)}",
+        limit=10,
+        window_seconds=3600,
+        message="Too many password reset attempts. Please try again later.",
+    )
+
     # Verify token
     try:
         token_data = verify_password_reset_token(reset_data.token)
@@ -635,6 +732,17 @@ async def reset_password(
                 "message": "Invalid or expired password reset token",
                 "action": "Request a new password reset"
             }
+        )
+
+    token_jti = token_data.get("jti")
+    if not token_jti or used_token_store.contains(f"password-reset:{token_jti}"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "invalid_token",
+                "message": "Password reset token has already been used or is invalid",
+                "action": "Request a new password reset",
+            },
         )
     
     # Get user
@@ -673,11 +781,22 @@ async def reset_password(
                 "message": "Token email does not match user email"
             }
         )
+
+    if not password_reset_state_matches(token_data.get("pwd"), str(user.hashed_password)):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "invalid_token",
+                "message": "Password reset token is no longer valid",
+                "action": "Request a new password reset",
+            },
+        )
     
     # Update password
     user.hashed_password = hash_password(reset_data.new_password)
     await db.commit()
     await db.refresh(user)
+    used_token_store.put(f"password-reset:{token_jti}", True, 3600)
     
     logger.info(f"✅ Password reset successfully for {user.email}")
     
@@ -787,10 +906,27 @@ async def google_callback(
     # Check if mobile flow
     if "mobile=true" in request.query_params.get("state", ""):
         scheme = os.getenv("MOBILE_APP_SCHEME", "enterprisemessaging")
+        auth_code = secrets.token_urlsafe(24)
+        mobile_auth_code_store.put(
+            auth_code,
+            {
+                "message": "Authentication successful"
+                if not is_new_user
+                else "Account created successfully",
+                "user": UserResponse.model_validate(user).model_dump(mode="json"),
+                "tokens": {
+                    "access_token": access_token,
+                    "refresh_token": refresh_token,
+                    "token_type": "bearer",
+                    "expires_in": ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+                },
+                "is_new_user": is_new_user,
+            },
+            ttl_seconds=300,
+        )
         return RedirectResponse(
             f"{scheme}://auth/callback"
-            f"?access_token={access_token}"
-            f"&refresh_token={refresh_token}"
+            f"?code={auth_code}"
             f"&is_new_user={str(is_new_user).lower()}"
         )
 
@@ -895,3 +1031,28 @@ async def google_token_exchange(
         ),
         is_new_user=is_new_user,
     )
+
+
+@router.post(
+    "/google/mobile/exchange-code",
+    response_model=OAuthCallbackResponse,
+    summary="Exchange mobile auth code",
+    description="""
+    Exchange a short-lived mobile OAuth handoff code for JWT tokens.
+
+    This keeps access and refresh tokens out of the deep-link URL during the
+    browser-to-app handoff.
+    """,
+)
+async def mobile_exchange_code(payload: MobileCodeExchangeRequest):
+    auth_payload = mobile_auth_code_store.pop(payload.code)
+    if not auth_payload:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "invalid_code",
+                "message": "Mobile auth code is invalid or expired",
+            },
+        )
+
+    return OAuthCallbackResponse(**auth_payload)

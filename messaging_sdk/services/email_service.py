@@ -1,89 +1,96 @@
 """
-Email service for Messaging & Calling SDK.
+Email service for the Messaging & Calling SDK.
 
-This service provides a unified interface for sending emails using
-configurable email providers (Resend, SendGrid, SMTP).
+This service composes email content separately from provider delivery so apps
+can customize templates, links, and branding without replacing transport.
 """
+
+from __future__ import annotations
 
 import logging
 from typing import Optional
 
-from messaging_sdk.providers.email import email_provider
+from messaging_sdk.core.config import Settings, settings as default_settings
+from messaging_sdk.emailing import (
+    EmailComposer,
+    EmailCustomization,
+    get_active_email_customization,
+)
+from messaging_sdk.providers.email import EmailProvider, get_email_provider
 
 logger = logging.getLogger(__name__)
 
 
 class EmailService:
     """
-    Email service that uses the configured email provider.
+    High-level email orchestration service.
 
-    This service provides high-level methods for common email operations
-    like verification and password reset, while delegating the actual
-    sending to the configured email provider.
+    Public send methods stay stable while composition and provider concerns stay
+    decoupled underneath.
     """
 
-    def __init__(self):
-        self.provider = email_provider
+    def __init__(
+        self,
+        *,
+        settings_obj: Optional[Settings] = None,
+        provider: Optional[EmailProvider] = None,
+        customization: Optional[EmailCustomization] = None,
+        composer: Optional[EmailComposer] = None,
+    ):
+        self.settings = settings_obj or default_settings
+        self.provider = provider or get_email_provider(self.settings)
+        active_customization = customization or get_active_email_customization(self.settings)
+        self.composer = composer or EmailComposer(
+            settings_obj=self.settings,
+            customization=active_customization,
+        )
 
     async def send_verification_email(
         self,
         to_email: str,
         username: str,
-        verification_token: str
+        verification_token: str,
     ) -> bool:
-        """
-        Send email verification link.
-
-        Args:
-            to_email: Recipient email address
-            username: User's username for personalization
-            verification_token: Verification token
-
-        Returns:
-            True if sent successfully, False otherwise
-        """
-        return await self.provider.send_verification_email(to_email, verification_token)
+        message = self.composer.compose(
+            "verify_email",
+            to_email=to_email,
+            username=username,
+            tokens={"verification_token": verification_token},
+        )
+        return await self.provider.send_email(
+            to_email=to_email,
+            subject=message.subject,
+            html_content=message.html_body,
+            text_content=message.text_body,
+        )
 
     async def send_password_reset_email(
         self,
         to_email: str,
         username: str,
-        reset_token: str
+        reset_token: str,
     ) -> bool:
-        """
-        Send password reset link.
-
-        Args:
-            to_email: Recipient email address
-            username: User's username for personalization
-            reset_token: Password reset token
-
-        Returns:
-            True if sent successfully, False otherwise
-        """
-        return await self.provider.send_password_reset_email(to_email, reset_token)
+        message = self.composer.compose(
+            "password_reset",
+            to_email=to_email,
+            username=username,
+            tokens={"reset_token": reset_token},
+        )
+        return await self.provider.send_email(
+            to_email=to_email,
+            subject=message.subject,
+            html_content=message.html_body,
+            text_content=message.text_body,
+        )
 
     async def send_custom_email(
         self,
         to_email: str,
         subject: str,
         html_content: str,
-        text_content: Optional[str] = None
+        text_content: Optional[str] = None,
     ) -> bool:
-        """
-        Send a custom email.
-
-        Args:
-            to_email: Recipient email address
-            subject: Email subject
-            html_content: HTML email body
-            text_content: Optional plain text version
-
-        Returns:
-            True if sent successfully, False otherwise
-        """
         return await self.provider.send_email(to_email, subject, html_content, text_content)
 
 
-# Global email service instance
 email_service = EmailService()

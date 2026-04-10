@@ -1,0 +1,11 @@
+<div style="margin-top:28px; padding-top:18px; border-top:1px solid #e2e8f0; color:#475569; font-size:14px; line-height:1.6;">
+  {% if theme.support_email %}
+  <p style="margin:0 0 8px;">Need help? Reply to <a href="mailto:{{ theme.support_email }}" style="color:{{ theme.primary_color }};">{{ theme.support_email }}</a>.</p>
+  {% endif %}
+  {% if theme.support_url %}
+  <p style="margin:0 0 8px;">Support: <a href="{{ theme.support_url }}" style="color:{{ theme.primary_color }};">{{ theme.support_url }}</a></p>
+  {% endif %}
+  {% if theme.footer_text %}
+  <p style="margin:0;">{{ theme.footer_text }}</p>
+  {% endif %}
+</div>

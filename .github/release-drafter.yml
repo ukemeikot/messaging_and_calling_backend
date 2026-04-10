@@ -1,0 +1,58 @@
+name-template: "v$RESOLVED_VERSION"
+tag-template: "v$RESOLVED_VERSION"
+template: |
+  ## Summary
+
+  $CHANGES
+
+  ## Notes
+
+  - Review `SECURITY.md` before promoting this release to production.
+  - Run the current test suite locally if the release contains infra or config changes.
+
+categories:
+  - title: "Breaking Changes"
+    labels:
+      - breaking
+  - title: "Features"
+    labels:
+      - feature
+      - enhancement
+  - title: "Fixes"
+    labels:
+      - bug
+      - fix
+  - title: "Security"
+    labels:
+      - security
+  - title: "Documentation"
+    labels:
+      - documentation
+      - docs
+  - title: "Tests and Tooling"
+    labels:
+      - test
+      - tooling
+      - ci
+
+change-template: "- $TITLE (#$NUMBER)"
+no-changes-template: "- No categorized changes"
+version-resolver:
+  major:
+    labels:
+      - breaking
+  minor:
+    labels:
+      - feature
+      - enhancement
+  patch:
+    labels:
+      - bug
+      - fix
+      - security
+      - documentation
+      - docs
+      - test
+      - tooling
+      - ci
+  default: patch

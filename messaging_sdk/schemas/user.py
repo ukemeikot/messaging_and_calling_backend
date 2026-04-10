@@ -120,6 +120,21 @@ class UserResponse(BaseModel):
         },
     }
 
+
+class PublicUserResponse(BaseModel):
+    """Schema for public-facing user profile data."""
+
+    id: uuid.UUID
+    username: str
+    full_name: Optional[str] = None
+    bio: Optional[str] = None
+    profile_picture_url: Optional[str] = None
+    is_verified: bool
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
 # ============================================
 # AUTH TOKENS
 # ============================================
@@ -203,6 +218,12 @@ class GoogleTokenExchange(BaseModel):
             ]
         }
     }
+
+
+class MobileCodeExchangeRequest(BaseModel):
+    """Exchange a short-lived mobile auth code for tokens."""
+
+    code: str = Field(..., min_length=12, description="Short-lived mobile auth code")
 
 # ============================================
 # OAUTH RESPONSE
