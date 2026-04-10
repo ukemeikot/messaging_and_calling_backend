@@ -20,6 +20,7 @@ import uuid
 
 from messaging_sdk.core.security import decode_token
 from messaging_sdk.services.websocket_manager import manager
+from messaging_sdk.services.call_service import CallService
 from messaging_sdk.database import get_db
 from messaging_sdk.models.user import User
 from sqlalchemy import select
@@ -170,8 +171,18 @@ async def handle_signaling_message(
             "message": "Invalid UUID format"
         })
         return
-    
-    # Add user to call if not already added
+
+    call_service = CallService(db)
+    try:
+        await call_service.validate_signaling_access(call_id, user_id, to_user_id)
+    except Exception as exc:
+        detail = getattr(exc, "detail", "Unauthorized signaling request")
+        await websocket.send_json({
+            "type": "error",
+            "message": detail,
+        })
+        return
+
     manager.add_to_call(call_id, user_id)
     
     # Handle different message types
@@ -188,7 +199,6 @@ async def handle_signaling_message(
         await handle_media_state_update(user_id, call_id, message)
     
     elif message_type == "join-call":
-        # User joined call
         manager.add_to_call(call_id, user_id)
         await broadcast_call_event(call_id, {
             "type": "participant-joined",
@@ -197,7 +207,6 @@ async def handle_signaling_message(
         }, exclude_user_id=user_id)
     
     elif message_type == "leave-call":
-        # User left call
         manager.remove_from_call(call_id, user_id)
         await broadcast_call_event(call_id, {
             "type": "participant-left",

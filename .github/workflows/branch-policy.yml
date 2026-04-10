@@ -1,0 +1,38 @@
+name: PR Branch Policy
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - edited
+
+jobs:
+  validate:
+    name: Validate Pull Request Flow
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce promotion path
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const base = context.payload.pull_request.base.ref;
+            const head = context.payload.pull_request.head.ref;
+
+            let allowed = false;
+            let guidance = "";
+
+            if (base === "develop") {
+              allowed = /^feature\/.+/.test(head);
+              guidance = "Pull requests into develop must come from a feature/* branch.";
+            } else if (base === "main") {
+              allowed = head === "develop";
+              guidance = "Pull requests into main must come from develop.";
+            } else {
+              guidance = "This repository only promotes work through develop and main.";
+            }
+
+            if (!allowed) {
+              core.setFailed(`${guidance} Received ${head} -> ${base}.`);
+            }

@@ -152,6 +152,7 @@ class ContactService:
         existing = await self.get_relationship(user_id, blocked_user_id)
         if existing:
             await self.db.delete(existing)
+            await self.db.flush()
         
         # Create blocked relationship
         block = Contact(

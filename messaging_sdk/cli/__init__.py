@@ -1,257 +1,292 @@
 """
-CLI tool for Messaging & Calling SDK.
+CLI tooling for the messaging SDK.
 
-Provides commands for:
-- Initializing new projects
-- Database migrations
-- Configuration validation
-- Development utilities
-
-Usage:
-    messaging-sdk init --project-name myapp
-    messaging-sdk db migrate
-    messaging-sdk config test
+The CLI is intentionally self-contained so the scaffold command can run before a
+project has any application configuration in place.
 """
 
+from __future__ import annotations
+
 import os
+import subprocess
 import sys
 from pathlib import Path
-from typing import Optional
-import click
-import subprocess
-import shutil
 
-from messaging_sdk.core.config import settings
+import click
+
+
+def _load_settings():
+    """Import settings lazily so `init` works without an existing .env file."""
+    from messaging_sdk.core.config import settings
+
+    return settings
 
 
 @click.group()
 @click.version_option(version="1.0.0")
 def cli():
-    """Messaging & Calling SDK CLI tool."""
-    pass
+    """Messaging & Calling SDK CLI."""
 
 
 @cli.command()
 @click.option("--project-name", required=True, help="Name of the new project")
-@click.option("--template", default="basic", type=click.Choice(["basic", "full"]), help="Project template to use")
+@click.option(
+    "--template",
+    default="basic",
+    type=click.Choice(["basic", "full"]),
+    show_default=True,
+    help="Project template to generate",
+)
 def init(project_name: str, template: str):
-    """Initialize a new messaging project."""
-    click.echo(f"Initializing new project: {project_name}")
-
-    # Create project directory
+    """Initialize a new FastAPI project scaffold."""
     project_dir = Path(project_name)
     if project_dir.exists():
-        click.echo(f"❌ Directory {project_name} already exists!", err=True)
-        return
+        raise click.ClickException(f"Directory '{project_name}' already exists.")
 
-    project_dir.mkdir()
-    os.chdir(project_dir)
+    click.echo(f"Initializing project scaffold in {project_dir}")
+    project_dir.mkdir(parents=True)
 
-    # Create basic project structure
-    _create_basic_structure(project_name)
-
+    _create_basic_structure(project_dir, project_name)
     if template == "full":
-        _create_full_template(project_name)
+        _create_full_template(project_dir, project_name)
 
-    click.echo("✅ Project initialized successfully!"    click.echo(f"📁 Created project in: {project_dir.absolute()}")
-    click.echo("🚀 Next steps:"
-    click.echo("   1. cd {project_name}")
-    click.echo("   2. Edit .env file with your configuration")
-    click.echo("   3. Run: messaging-sdk db migrate"
-    click.echo("   4. Run: uvicorn main:app --reload"
+    click.echo("Project scaffold created successfully.")
+    click.echo(f"Location: {project_dir.resolve()}")
+    click.echo("Next steps:")
+    click.echo(f"  1. cd {project_name}")
+    click.echo("  2. Copy .env.example to .env and fill in real values")
+    click.echo("  3. Run alembic upgrade head")
+    click.echo("  4. Start the app with uvicorn main:app --reload")
 
 
-def _create_basic_structure(project_name: str):
-    """Create basic project structure."""
-    # Create directories
-    dirs = ["app", "uploads", "uploads/profile_pictures"]
-    for dir_name in dirs:
-        Path(dir_name).mkdir(parents=True, exist_ok=True)
+def _create_basic_structure(project_dir: Path, project_name: str):
+    """Create the base project scaffold."""
+    for directory in [
+        project_dir / "app",
+        project_dir / "app" / "email_templates",
+        project_dir / "uploads",
+        project_dir / "uploads" / "profile_pictures",
+    ]:
+        directory.mkdir(parents=True, exist_ok=True)
 
-    # Create .env file
-    env_content = f"""# {project_name} - Environment Configuration
-# Copy this file to .env and fill in your values
+    secret_key = os.urandom(32).hex()
 
-# ========================================
-# REQUIRED SETTINGS
-# ========================================
-
-# Database (choose one)
+    env_content = f"""# {project_name} environment configuration
 DATABASE_URL=postgresql+asyncpg://user:password@localhost:5432/{project_name}
-# DATABASE_URL_ASYNC=postgresql+asyncpg://user:password@localhost:5432/{project_name}
-
-# Security
-SECRET_KEY={os.urandom(32).hex()}
-
-# ========================================
-# AUTHENTICATION (Google OAuth)
-# ========================================
-
-GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
-GOOGLE_CLIENT_SECRET=your-google-client-secret
-GOOGLE_REDIRECT_URI=http://localhost:8000/api/v1/auth/google/callback
-
-# ========================================
-# EMAIL CONFIGURATION (choose one provider)
-# ========================================
-
-# Option 1: Resend (recommended for development)
-EMAIL_PROVIDER=resend
-RESEND_API_KEY=re_your_resend_api_key_here
+SECRET_KEY={secret_key}
+EMAIL_PROVIDER=console
 FRONTEND_URL=http://localhost:3000
-
-# Option 2: SendGrid
-# EMAIL_PROVIDER=sendgrid
-# SENDGRID_API_KEY=SG.your_sendgrid_api_key_here
-
-# Option 3: SMTP
-# EMAIL_PROVIDER=smtp
-# SMTP_HOST=smtp.gmail.com
-# SMTP_PORT=587
-# SMTP_USERNAME=your-email@gmail.com
-# SMTP_PASSWORD=your-app-password
-
-# ========================================
-# OPTIONAL: SCALING & PRODUCTION
-# ========================================
-
-# Redis (optional, enables caching and scaling)
-# REDIS_URL=redis://localhost:6379/0
-
-# Celery (optional, enables background task processing)
-# CELERY_BROKER_URL=redis://localhost:6379/1
-# CELERY_RESULT_BACKEND=redis://localhost:6379/2
-
-# WebRTC (optional, for corporate networks)
-# TURN_SERVER_URL=turn:your-turn-server.com:3478
-# TURN_SERVER_USERNAME=your-username
-# TURN_SERVER_CREDENTIAL=your-credential
-
-# ========================================
-# DEPLOYMENT
-# ========================================
-
+EMAIL_TEMPLATE_DIR=app/email_templates
+EMAIL_THEME_APP_NAME={project_name}
+EMAIL_THEME_PRIMARY_COLOR=#1d4ed8
+EMAIL_THEME_ACCENT_COLOR=#0f172a
+EMAIL_THEME_SUPPORT_EMAIL=support@example.com
+EMAIL_THEME_FOOTER_TEXT=Sent by {project_name}
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_REDIRECT_URI=
 ENVIRONMENT=development
+DEBUG=false
 CORS_ORIGINS=["http://localhost:3000"]
 """
-    Path(".env.example").write_text(env_content)
+    (project_dir / ".env.example").write_text(env_content, encoding="utf-8")
 
-    # Create main.py
     main_content = f'''"""
-Main application file for {project_name}.
-
-This file demonstrates how to use the Messaging & Calling SDK.
+Application entrypoint for {project_name}.
 """
-
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from starlette.middleware.sessions import SessionMiddleware
 
 from messaging_sdk import MessagingApp
-from messaging_sdk.core.config import settings
+from messaging_sdk.core.config import Settings
+from messaging_sdk.emailing import EmailCustomization
 
-# Validate configuration
-issues = settings.validate_configuration()
-if issues:
-    print("❌ Configuration issues found:")
-    for issue in issues:
-        print(f"   - {{issue}}")
-    print("\\nPlease check your .env file and fix the issues above.")
-    exit(1)
+from app.email_hooks import AFTER_RENDER_HOOK, BEFORE_RENDER_HOOK, LINK_BUILDERS
+from app.email_theme import EMAIL_THEME
 
-# Create FastAPI app using the SDK
-app = MessagingApp(settings=settings)
+settings = Settings()
+email_customization = EmailCustomization(
+    template_dir=settings.email_template_dir or "app/email_templates",
+    theme=EMAIL_THEME,
+    link_builders=LINK_BUILDERS,
+    before_render=BEFORE_RENDER_HOOK,
+    after_render=AFTER_RENDER_HOOK,
+)
 
-# Add any custom routes or middleware here
-# app.include_router(your_custom_router)
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
+app = MessagingApp(
+    settings=settings,
+    title="{project_name}",
+    email_customization=email_customization,
+)
 '''
-    Path("main.py").write_text(main_content)
+    (project_dir / "main.py").write_text(main_content, encoding="utf-8")
 
-    # Create requirements.txt
-    requirements = """fastapi==0.124.4
-uvicorn[standard]==0.38.0
-messaging-calling-sdk==1.0.0
-python-dotenv==1.2.1
+    (project_dir / "app" / "__init__.py").write_text(
+        '"""Application package for scaffolded customizations."""\n',
+        encoding="utf-8",
+    )
+    (project_dir / "app" / "email_theme.py").write_text(
+        f'''"""
+Shared email theme values for {project_name}.
 """
-    Path("requirements.txt").write_text(requirements)
 
-    # Create README.md
+from messaging_sdk.emailing import EmailTheme
+
+
+EMAIL_THEME = EmailTheme(
+    app_name="{project_name}",
+    primary_color="#1d4ed8",
+    accent_color="#0f172a",
+    support_email="support@example.com",
+    footer_text="Sent by {project_name}",
+)
+''',
+        encoding="utf-8",
+    )
+    (project_dir / "app" / "email_hooks.py").write_text(
+        '''"""
+Optional email hooks for advanced customization.
+"""
+
+from messaging_sdk.emailing import EmailMessage, EmailTemplateContext
+
+
+def before_render(context: EmailTemplateContext):
+    """Mutate context before the templates are rendered."""
+    return context
+
+
+def after_render(message: EmailMessage, context: EmailTemplateContext):
+    """Mutate the rendered message before provider delivery."""
+    return message
+
+
+def build_password_reset_link(context: EmailTemplateContext) -> str:
+    token = context.tokens["reset_token"]
+    return f"{context.app['frontend_url']}/reset-password?token={token}"
+
+
+LINK_BUILDERS = {
+    "password_reset": build_password_reset_link,
+}
+
+BEFORE_RENDER_HOOK = before_render
+AFTER_RENDER_HOOK = after_render
+''',
+        encoding="utf-8",
+    )
+    _create_email_templates(project_dir / "app" / "email_templates")
+
     readme_content = f"""# {project_name}
 
-A messaging and calling application built with the Messaging & Calling SDK.
+FastAPI application scaffold generated by the Messaging & Calling SDK CLI.
 
-## Setup
+## Quick Start
 
-1. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-2. **Configure environment:**
-   ```bash
-   cp .env.example .env
-   # Edit .env with your configuration
-   ```
-
-3. **Run database migrations:**
-   ```bash
-   messaging-sdk db migrate
-   ```
-
-4. **Start the server:**
-   ```bash
-   python main.py
-   ```
-
-The API will be available at: http://localhost:8000
-API documentation: http://localhost:8000/docs
-
-## Features
-
-- ✅ User authentication (JWT + Google OAuth)
-- ✅ Real-time messaging (1-on-1 and group chats)
-- ✅ Voice and video calling (WebRTC)
-- ✅ Contact management
-- ✅ Full-text search
-- ✅ Email notifications
-- ✅ File uploads
-
-## Configuration
-
-See `.env.example` for all available configuration options.
-
-## SDK Documentation
-
-For more information about the Messaging & Calling SDK, visit:
-https://github.com/yourorg/messaging-calling-sdk
+1. Create a virtual environment and install your dependencies.
+2. Copy `.env.example` to `.env`.
+3. Run `alembic upgrade head`.
+4. Start the app with `uvicorn main:app --reload`.
 """
-    Path("README.md").write_text(readme_content)
+    (project_dir / "README.md").write_text(readme_content, encoding="utf-8")
 
 
-def _create_full_template(project_name: str):
-    """Create additional files for full template."""
-    # Create docker-compose.yml
-    docker_compose = f"""version: '3.8'
+def _create_email_templates(template_dir: Path):
+    """Create editable email templates in the scaffold."""
+    (template_dir / "_partials").mkdir(parents=True, exist_ok=True)
+    templates: dict[str, str] = {
+        "base.html": """<!DOCTYPE html>
+<html lang=\"en\">
+  <head>
+    <meta charset=\"utf-8\" />
+    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />
+    <title>{{ data.subject }}</title>
+  </head>
+  <body style=\"margin:0; padding:0; background:#f8fafc; color:#0f172a; font-family:Segoe UI, Arial, sans-serif;\">
+    <div style=\"max-width:640px; margin:0 auto; padding:32px 16px;\">
+      <div style=\"background:#ffffff; border:1px solid #e2e8f0; border-radius:20px; overflow:hidden;\">
+        <div style=\"padding:28px 32px; background:linear-gradient(135deg, {{ theme.primary_color }}, {{ theme.accent_color }}); color:#ffffff;\">
+          <p style=\"margin:0; font-size:12px; letter-spacing:0.18em; text-transform:uppercase; opacity:0.85;\">{{ app.name }}</p>
+          <h1 style=\"margin:14px 0 0; font-size:28px; line-height:1.2;\">{{ data.headline }}</h1>
+        </div>
+        <div style=\"padding:32px;\">
+          {% block content %}{% endblock %}
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
+""",
+        "_partials/button.html": """<a href=\"{{ url }}\" style=\"display:inline-block; background:{{ theme.primary_color }}; color:#ffffff; padding:14px 20px; border-radius:999px; text-decoration:none; font-weight:600;\">{{ label }}</a>
+""",
+        "_partials/footer.html": """<div style=\"margin-top:28px; padding-top:18px; border-top:1px solid #e2e8f0; color:#475569; font-size:14px; line-height:1.6;\">
+  {% if theme.support_email %}<p style=\"margin:0 0 8px;\">Need help? Reply to <a href=\"mailto:{{ theme.support_email }}\" style=\"color:{{ theme.primary_color }};\">{{ theme.support_email }}</a>.</p>{% endif %}
+  {% if theme.footer_text %}<p style=\"margin:0;\">{{ theme.footer_text }}</p>{% endif %}
+</div>
+""",
+        "verify_email.html": """{% extends \"base.html\" %}
+
+{% block content %}
+<p style=\"margin:0 0 16px; color:#334155; font-size:16px; line-height:1.7;\">Hi{% if user.username %} {{ user.username }}{% endif %},</p>
+<p style=\"margin:0 0 24px; color:#334155; font-size:16px; line-height:1.7;\">{{ data.intro_text }}</p>
+<p style=\"margin:0 0 24px;\">{% with url=links.action_url, label=data.action_label %}{% include \"_partials/button.html\" %}{% endwith %}</p>
+<p style=\"margin:0 0 12px; color:#475569; font-size:14px; line-height:1.7;\">If the button does not work, use this link:</p>
+<p style=\"margin:0 0 16px; font-size:14px; word-break:break-word;\"><a href=\"{{ links.action_url }}\" style=\"color:{{ theme.primary_color }};\">{{ links.action_url }}</a></p>
+<p style=\"margin:0; color:#475569; font-size:14px; line-height:1.7;\">{{ data.expiry_text }}</p>
+<p style=\"margin:12px 0 0; color:#475569; font-size:14px; line-height:1.7;\">{{ data.ignore_text }}</p>
+{% include \"_partials/footer.html\" %}
+{% endblock %}
+""",
+        "verify_email.txt": """Hi{% if user.username %} {{ user.username }}{% endif %},
+
+{{ data.intro_text }}
+
+{{ data.action_label }}: {{ links.action_url }}
+
+{{ data.expiry_text }}
+{{ data.ignore_text }}
+""",
+        "password_reset.html": """{% extends \"base.html\" %}
+
+{% block content %}
+<p style=\"margin:0 0 16px; color:#334155; font-size:16px; line-height:1.7;\">Hi{% if user.username %} {{ user.username }}{% endif %},</p>
+<p style=\"margin:0 0 24px; color:#334155; font-size:16px; line-height:1.7;\">{{ data.intro_text }}</p>
+<p style=\"margin:0 0 24px;\">{% with url=links.action_url, label=data.action_label %}{% include \"_partials/button.html\" %}{% endwith %}</p>
+<p style=\"margin:0 0 12px; color:#475569; font-size:14px; line-height:1.7;\">If the button does not work, use this link:</p>
+<p style=\"margin:0 0 16px; font-size:14px; word-break:break-word;\"><a href=\"{{ links.action_url }}\" style=\"color:{{ theme.primary_color }};\">{{ links.action_url }}</a></p>
+<p style=\"margin:0; color:#475569; font-size:14px; line-height:1.7;\">{{ data.expiry_text }}</p>
+<p style=\"margin:12px 0 0; color:#475569; font-size:14px; line-height:1.7;\">{{ data.ignore_text }}</p>
+{% include \"_partials/footer.html\" %}
+{% endblock %}
+""",
+        "password_reset.txt": """Hi{% if user.username %} {{ user.username }}{% endif %},
+
+{{ data.intro_text }}
+
+{{ data.action_label }}: {{ links.action_url }}
+
+{{ data.expiry_text }}
+{{ data.ignore_text }}
+""",
+    }
+    for relative_path, content in templates.items():
+        (template_dir / relative_path).write_text(content, encoding="utf-8")
+
+
+def _create_full_template(project_dir: Path, project_name: str):
+    """Create the extended scaffold with container files."""
+    docker_compose = f"""version: "3.8"
 
 services:
   api:
     build: .
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
     ports:
       - "8000:8000"
-    environment:
-      - DATABASE_URL=postgresql+asyncpg://user:password@db:5432/{project_name}
-      - REDIS_URL=redis://redis:6379/0
+    env_file:
+      - .env
+    volumes:
+      - .:/app
     depends_on:
       - db
-      - redis
-    volumes:
-      - ./uploads:/app/uploads
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
   db:
     image: postgres:15
@@ -261,113 +296,66 @@ services:
       POSTGRES_PASSWORD: password
     ports:
       - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-
-volumes:
-  postgres_data:
 """
-    Path("docker-compose.yml").write_text(docker_compose)
+    (project_dir / "docker-compose.yml").write_text(docker_compose, encoding="utf-8")
 
-    # Create Dockerfile
     dockerfile = """FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \\
-    gcc \\
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy requirements and install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
 COPY . .
 
-# Create uploads directory
-RUN mkdir -p uploads/profile_pictures
-
-# Expose port
-EXPOSE 8000
-
-# Run the application
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 """
-    Path("Dockerfile").write_text(dockerfile)
+    (project_dir / "Dockerfile").write_text(dockerfile, encoding="utf-8")
 
 
-@cli.command()
-@click.option("--check-config", is_flag=True, help="Validate configuration before migrating")
-def db(check_config: bool):
-    """Database management commands."""
+@cli.command("db")
+@click.option("--check-config", is_flag=True, help="Validate configuration first")
+def db_command(check_config: bool):
+    """Run database migrations for the current project."""
+    settings = _load_settings()
+
     if check_config:
-        click.echo("🔍 Validating configuration...")
         issues = settings.validate_configuration()
         if issues:
-            click.echo("❌ Configuration issues found:")
             for issue in issues:
-                click.echo(f"   - {issue}")
-            click.echo("\\nPlease fix these issues before proceeding.")
-            return
+                click.echo(f"- {issue}")
+            raise click.ClickException("Configuration validation failed.")
 
-        click.echo("✅ Configuration is valid!")
+    result = subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise click.ClickException(result.stderr.strip() or "Migration failed.")
 
-    # Run alembic migrations
-    try:
-        click.echo("🗄️ Running database migrations...")
-        result = subprocess.run([
-            sys.executable, "-m", "alembic", "upgrade", "head"
-        ], capture_output=True, text=True, cwd=".")
-
-        if result.returncode == 0:
-            click.echo("✅ Database migrations completed successfully!")
-        else:
-            click.echo("❌ Database migration failed:")
-            click.echo(result.stderr)
-
-    except FileNotFoundError:
-        click.echo("❌ Alembic not found. Make sure the Messaging SDK is properly installed.")
-    except Exception as e:
-        click.echo(f"❌ Error running migrations: {e}")
+    click.echo("Database migrations completed successfully.")
 
 
 @cli.command()
 def config():
-    """Configuration management commands."""
-    click.echo("🔧 Configuration Status:")
-    click.echo(f"   Environment: {settings.deployment.environment}")
-    click.echo(f"   Database: {'✅ Configured' if settings.database.url else '❌ Not configured'}")
-    click.echo(f"   Email: {settings.email.provider} ({'✅ Configured' if _is_email_configured() else '❌ Not configured'})")
-    click.echo(f"   Cache: {'Redis' if settings.cache.redis_url else 'In-memory'}")
-    click.echo(f"   Tasks: {'Celery' if settings.task_queue.celery_broker_url else 'FastAPI BackgroundTasks'}")
+    """Show configuration summary for the current project."""
+    settings = _load_settings()
+
+    click.echo("Configuration summary")
+    click.echo(f"  Environment: {settings.environment}")
+    click.echo(f"  Database: {settings.database_url}")
+    click.echo(f"  Email provider: {settings.email_provider}")
+    click.echo(f"  Debug: {settings.debug}")
 
     issues = settings.validate_configuration()
     if issues:
-        click.echo("\\n⚠️ Configuration Issues:")
+        click.echo("Validation issues:")
         for issue in issues:
-            click.echo(f"   - {issue}")
+            click.echo(f"  - {issue}")
     else:
-        click.echo("\\n✅ Configuration is valid!")
+        click.echo("Configuration is valid.")
 
 
-def _is_email_configured() -> bool:
-    """Check if email is properly configured."""
-    email_config = settings.email
-    if email_config.provider == "resend":
-        return bool(email_config.resend_api_key)
-    elif email_config.provider == "sendgrid":
-        return bool(email_config.sendgrid_api_key)
-    elif email_config.provider == "smtp":
-        return bool(email_config.smtp_host)
-    return False
-
-
-if __name__ == "__main__":
-    cli()
+__all__ = ["cli"]

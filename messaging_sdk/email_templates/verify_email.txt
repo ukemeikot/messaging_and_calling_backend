@@ -1,0 +1,10 @@
+Hi{% if user.username %} {{ user.username }}{% endif %},
+
+{{ data.intro_text }}
+
+{{ data.action_label }}: {{ links.action_url }}
+
+{{ data.expiry_text }}
+{{ data.ignore_text }}
+
+{% if theme.support_email %}Support: {{ theme.support_email }}{% endif %}

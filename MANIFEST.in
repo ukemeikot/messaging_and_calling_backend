@@ -1,0 +1,5 @@
+include README.md
+include CHANGELOG.md
+include SECURITY.md
+include FEATURES.md
+recursive-include messaging_sdk/email_templates *.html *.txt

@@ -68,6 +68,15 @@ class EmailSettings(BaseSettings):
 
     provider: Literal["resend", "sendgrid", "smtp", "console"] = Field("resend", env="EMAIL_PROVIDER")
     frontend_url: str = Field("http://localhost:3000", env="FRONTEND_URL")
+    template_dir: Optional[str] = Field(None, env="EMAIL_TEMPLATE_DIR")
+    theme_app_name: str = Field("Your App", env="EMAIL_THEME_APP_NAME")
+    theme_logo_url: Optional[str] = Field(None, env="EMAIL_THEME_LOGO_URL")
+    theme_primary_color: str = Field("#1d4ed8", env="EMAIL_THEME_PRIMARY_COLOR")
+    theme_accent_color: str = Field("#0f172a", env="EMAIL_THEME_ACCENT_COLOR")
+    theme_support_email: Optional[str] = Field(None, env="EMAIL_THEME_SUPPORT_EMAIL")
+    theme_support_url: Optional[str] = Field(None, env="EMAIL_THEME_SUPPORT_URL")
+    theme_footer_text: Optional[str] = Field(None, env="EMAIL_THEME_FOOTER_TEXT")
+    theme_product_url: Optional[str] = Field(None, env="EMAIL_THEME_PRODUCT_URL")
 
     # Resend settings
     resend_api_key: Optional[SecretStr] = Field(None, env="RESEND_API_KEY")
@@ -144,7 +153,7 @@ class DeploymentSettings(BaseSettings):
     """Deployment and environment settings."""
 
     environment: str = Field("development", env="ENVIRONMENT")
-    cors_origins: List[str] = Field(["*"], env="CORS_ORIGINS")
+    cors_origins: List[str] = Field(["http://localhost:3000"], env="CORS_ORIGINS")
     debug: bool = Field(False, env="DEBUG")
 
     @validator("cors_origins", pre=True)
@@ -181,6 +190,15 @@ class Settings(BaseSettings):
     # Email settings
     email_provider: Literal["resend", "sendgrid", "smtp", "console"] = Field("resend", env="EMAIL_PROVIDER")
     frontend_url: str = Field("http://localhost:3000", env="FRONTEND_URL")
+    email_template_dir: Optional[str] = Field(None, env="EMAIL_TEMPLATE_DIR")
+    email_theme_app_name: str = Field("Your App", env="EMAIL_THEME_APP_NAME")
+    email_theme_logo_url: Optional[str] = Field(None, env="EMAIL_THEME_LOGO_URL")
+    email_theme_primary_color: str = Field("#1d4ed8", env="EMAIL_THEME_PRIMARY_COLOR")
+    email_theme_accent_color: str = Field("#0f172a", env="EMAIL_THEME_ACCENT_COLOR")
+    email_theme_support_email: Optional[str] = Field(None, env="EMAIL_THEME_SUPPORT_EMAIL")
+    email_theme_support_url: Optional[str] = Field(None, env="EMAIL_THEME_SUPPORT_URL")
+    email_theme_footer_text: Optional[str] = Field(None, env="EMAIL_THEME_FOOTER_TEXT")
+    email_theme_product_url: Optional[str] = Field(None, env="EMAIL_THEME_PRODUCT_URL")
     resend_api_key: Optional[SecretStr] = Field(None, env="RESEND_API_KEY")
     resend_from_email: str = Field("onboarding@resend.dev", env="RESEND_FROM_EMAIL")
     resend_from_name: str = Field("Your App", env="RESEND_FROM_NAME")
@@ -206,7 +224,7 @@ class Settings(BaseSettings):
 
     # Deployment settings
     environment: str = Field("development", env="ENVIRONMENT")
-    cors_origins: List[str] = Field(["*"], env="CORS_ORIGINS")
+    cors_origins: List[str] = Field(["http://localhost:3000"], env="CORS_ORIGINS")
     debug: bool = Field(False, env="DEBUG")
 
     # JWT settings
@@ -295,6 +313,15 @@ class Settings(BaseSettings):
         return EmailSettings(
             provider=self.email_provider,
             frontend_url=self.frontend_url,
+            template_dir=self.email_template_dir,
+            theme_app_name=self.email_theme_app_name,
+            theme_logo_url=self.email_theme_logo_url,
+            theme_primary_color=self.email_theme_primary_color,
+            theme_accent_color=self.email_theme_accent_color,
+            theme_support_email=self.email_theme_support_email,
+            theme_support_url=self.email_theme_support_url,
+            theme_footer_text=self.email_theme_footer_text,
+            theme_product_url=self.email_theme_product_url,
             resend_api_key=self.resend_api_key,
             resend_from_email=self.resend_from_email,
             resend_from_name=self.resend_from_name,
@@ -373,6 +400,9 @@ class Settings(BaseSettings):
             issues.append("SENDGRID_API_KEY is required when EMAIL_PROVIDER=sendgrid")
         elif self.email_provider == "smtp" and not self.smtp_host:
             issues.append("SMTP_HOST is required when EMAIL_PROVIDER=smtp")
+
+        if "*" in self.cors_origins and self.environment != "development":
+            issues.append("CORS wildcard origins are only allowed in development")
 
         return issues
 
