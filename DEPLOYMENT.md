@@ -9,21 +9,21 @@ It also deploys the documentation website from `main` to GitHub Pages.
 
 ## Recommended hosting setup
 
-Use GitHub Pages for the docs website.
+Use GitHub Pages with `Deploy from a branch` for the docs website.
 
 Why this is the best fit right now:
 
-- the site is already a static site under [`website/`](./website/README.md)
+- the published site now lives under [`docs/`](./docs/index.html)
 - deployment is simple and free for a public repository
 - GitHub Pages supports your custom subdomain
-- it keeps the docs deployment close to the release workflow
+- it avoids the current GitHub Actions billing block
 
 ## What is already implemented
 
 - [`.github/workflows/branch-policy.yml`](./.github/workflows/branch-policy.yml): rejects PRs that do not follow the promotion path
 - [`.github/workflows/ci-release.yml`](./.github/workflows/ci-release.yml): runs tests on PRs and protected branches, updates `CHANGELOG.md` after `main` merges, refreshes draft release notes on `main`, and publishes GitHub releases from version tags
-- [`.github/workflows/deploy-docs.yml`](./.github/workflows/deploy-docs.yml): deploys the `website/` folder to GitHub Pages on `main`
-- [`website/CNAME`](./website/CNAME): sets the intended custom domain to `messagingandcallingbackend.credianlab.xyz`
+- [`docs/CNAME`](./docs/CNAME): sets the intended custom domain to `messagingandcallingbackend.credianlab.xyz`
+- [`docs/.nojekyll`](./docs/.nojekyll): disables Jekyll processing for the published Pages folder
 
 ## GitHub package install strategy
 
@@ -61,13 +61,15 @@ In GitHub:
 
 1. Open `Settings`
 2. Open `Pages`
-3. Under `Build and deployment`, choose `GitHub Actions`
+3. Under `Build and deployment`, choose `Deploy from a branch`
+4. Branch: `main`
+5. Folder: `/docs`
 
-The workflow in [`.github/workflows/deploy-docs.yml`](./.github/workflows/deploy-docs.yml) will handle deployments after that.
+GitHub Pages will then publish the committed `docs/` folder whenever `main` is updated.
 
 ### 3. Add the custom domain
 
-The site artifact already includes [`website/CNAME`](./website/CNAME) with:
+The published Pages folder already includes [`docs/CNAME`](./docs/CNAME) with:
 
 ```text
 messagingandcallingbackend.credianlab.xyz
@@ -109,7 +111,7 @@ In GitHub `Settings` -> `Branches`, create branch protection rules for:
   - `CI and Release / Test Suite`
 - disable direct pushes
 - optionally require a higher approval count than `develop`
-- allow GitHub Actions to bypass protection so the changelog workflow can commit `CHANGELOG.md` after a merge
+- allow GitHub Actions to bypass protection only if you want the changelog workflow to commit `CHANGELOG.md` after a merge
 
 ## Daily developer flow
 
@@ -147,7 +149,7 @@ This is the only merge that should trigger:
 
 - changelog updates
 - release-draft updates
-- website deployment
+- GitHub Pages publishing from `/docs`
 
 ## Release checklist
 
@@ -164,7 +166,7 @@ After the merge to `main`:
 1. Watch the `CI and Release` workflow
 2. Confirm `CHANGELOG.md` was updated by the workflow
 3. Confirm the draft GitHub release was refreshed
-4. Confirm the `Deploy Documentation Website` workflow succeeded
+4. Confirm GitHub Pages picked up the new `main` commit
 5. Open the deployed site at `https://messagingandcallingbackend.credianlab.xyz`
 
 ### Publish a versioned release
@@ -202,5 +204,5 @@ Use this after your first deployment:
 
 - PR rejected: check the source and target branches match the required promotion path
 - changelog did not update: confirm `main` allows GitHub Actions to bypass protection
-- site did not deploy: confirm Pages is set to `GitHub Actions`
+- site did not deploy: confirm Pages is set to `Deploy from a branch`, branch `main`, folder `/docs`
 - custom domain does not resolve: confirm the DNS `CNAME` target is your GitHub Pages host

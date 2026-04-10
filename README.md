@@ -16,7 +16,8 @@ automation, and security notes needed to start building on top of it.
 - [SECURITY.md](./SECURITY.md): current security posture and remaining hardening gaps
 - [CHANGELOG.md](./CHANGELOG.md): release-facing summary of changes
 - [DEPLOYMENT.md](./DEPLOYMENT.md): branch promotion, GitHub package installs, and website hosting
-- [website/](./website/README.md): static docs and project website
+- [docs/](./docs/index.html): published project website for GitHub Pages
+- [website/](./website/README.md): local site workspace and source copy
 
 ## Built-in SDK features
 
@@ -230,30 +231,33 @@ The suite currently covers:
 
 ## Release process
 
-This repository includes GitHub Actions automation for CI, promotion checks, deployment, and release drafting:
+This repository includes GitHub Actions automation for CI, promotion checks, changelog updates, and release drafting:
 
 - PRs are enforced through `feature/*` -> `develop` -> `main`
 - pushes and pull requests across protected branches run `pytest`
-- merges to `main` update `CHANGELOG.md`, refresh draft release notes, and deploy the docs website
+- merges to `main` update `CHANGELOG.md` and refresh draft release notes
 - version tags such as `v0.1.0` publish a GitHub release
 
 See [DEPLOYMENT.md](./DEPLOYMENT.md) for the full operational guide.
 
 ## Documentation website
 
-The repository includes a static project site under
-[`website/`](./website/README.md).
+The published site lives under [`docs/`](./docs/index.html), which lets GitHub
+Pages deploy it directly from the `main` branch without GitHub Actions.
+
+The editable working copy also remains under [`website/`](./website/README.md).
 
 Preview it locally with:
 
 ```bash
-python -m http.server 8080 --directory website
+python -m http.server 8080 --directory docs
 ```
 
 Then open `http://127.0.0.1:8080`.
 
-For production hosting, the repository is wired to deploy the site from `main`
-to GitHub Pages and serve it from `messagingandcallingbackend.credianlab.xyz`.
+For production hosting, set GitHub Pages to deploy from branch `main` and folder
+`/docs`, then point the custom domain to
+`messagingandcallingbackend.credianlab.xyz`.
 
 ## Documentation policy
 
