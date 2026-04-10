@@ -24,6 +24,8 @@ This repository uses GitHub Actions to:
 
 ### Changed
 
+- Develop (#5)
+
 - `messaging_sdk` package imports are now lighter so non-app tooling can run without full app bootstrap
 - Call models now generate UUIDs on the Python side as well as PostgreSQL side, which improves testability
 - README and contribution guidance now document built-in SDK usage and require docs to ship with feature changes
